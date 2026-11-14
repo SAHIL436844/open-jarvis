@@ -3,7 +3,7 @@ package com.openjarvis.accessibility
 import android.view.accessibility.AccessibilityNodeInfo
 import java.util.ArrayDeque
 
-class ScreenReader {
+class ScreenReader(@Suppress("UNUSED_PARAMETER") owner: Any? = null) {
     fun extractAllText(): String {
         val root = JarvisAccessibilityService.instance?.rootInActiveWindow ?: return ""
         val builder = StringBuilder()
