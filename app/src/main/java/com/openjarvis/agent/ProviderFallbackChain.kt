@@ -60,7 +60,7 @@ class ProviderFallbackChain(private val context: Context) {
     }
     
     private fun getProvider(name: String, adapter: UniversalAdapter): LLMProvider {
-        return adapter.getActiveProvider()
+        return adapter.getProvider(name)
     }
     
     private fun isInCooldown(name: String): Boolean {
