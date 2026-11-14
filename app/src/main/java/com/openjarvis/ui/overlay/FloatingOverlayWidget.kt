@@ -1,16 +1,15 @@
 package com.openjarvis.ui.overlay
 
 import androidx.compose.animation.*
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.pointerInput
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -101,7 +100,7 @@ fun FloatingOverlayWidget(
                         stiffness = 260f,
                         dampingRatio = 0.8f
                     )
-                ) + fadeIn(animationSpec = tween(150, delayMillis = 240)))
+                ) + fadeIn(animationSpec = tween(150, delayMillis = 240))) togetherWith fadeOut(animationSpec = tween(100))
             } else {
                 (shrinkHorizontally(
                     animationSpec = spring(
@@ -113,7 +112,7 @@ fun FloatingOverlayWidget(
                         stiffness = Spring.StiffnessMedium,
                         dampingRatio = 0.8f
                     )
-                ) + fadeOut(animationSpec = tween(100)))
+                ) + fadeOut(animationSpec = tween(100))) togetherWith fadeIn(animationSpec = tween(150))
             }
         },
         label = "overlay_expand"
@@ -169,18 +168,15 @@ private fun CollapsedPill(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var glowAlpha by remember { mutableFloatStateOf(0.15f) }
-
-    LaunchedEffect(Unit) {
-        infiniteTransition.animateFloat(
-            initialValue = 0.15f,
-            targetValue = 0.45f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(3000, easing = FastOutSlowInEasing),
-                repeatMode = RepeatMode.Reverse
-            )
-        ) { glowAlpha = this }
-    }
+    val glowAlpha by rememberInfiniteTransition(label = "glow").animateFloat(
+        initialValue = 0.15f,
+        targetValue = 0.45f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(3000, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "glow_alpha"
+    )
 
     val statusScale by rememberInfiniteTransition(label = "status").animateFloat(
         initialValue = 0.75f,
