@@ -127,7 +127,19 @@ fun DashboardScreen(
             
             Spacer(modifier = Modifier.height(24.dp))
             
-            QuickAppsSection(apps = mostUsedApps, alpha = appsAlpha)
+            QuickAppsSection(apps = mostUsedApps, alpha = appsAlpha, onAppLaunched = { app, success ->
+                coroutineScope.launch {
+                    if (success) {
+                        graphifyRepo.logAppOpened(app.packageName, app.label)
+                        graphifyRepo.logTask("Open ${app.label}", "Opened ${app.label}")
+                        appsUsedCount = graphifyRepo.getMostUsedApps(1000).size
+                    } else {
+                        graphifyRepo.logTask("Open ${app.label}", "Failed to launch ${app.label}")
+                    }
+                    recentTasks = graphifyRepo.getRecentTasks(10)
+                    mostUsedApps = graphifyRepo.getMostUsedApps(4).ifEmpty { mostUsedApps }
+                }
+            })
             
             Spacer(modifier = Modifier.height(32.dp))
         }
@@ -569,7 +581,7 @@ private fun AppInitialBadge(label: String) {
 }
 
 @Composable
-private fun QuickAppsSection(apps: List<AppNode>, alpha: Float) {
+private fun QuickAppsSection(apps: List<AppNode>, alpha: Float, onAppLaunched: (AppNode, Boolean) -> Unit) {
     Column(modifier = Modifier.graphicsLayer(alpha = alpha)) {
         Text(
             text = "QUICK APPS",
@@ -591,19 +603,7 @@ private fun QuickAppsSection(apps: List<AppNode>, alpha: Float) {
             modifier = Modifier.height(220.dp)
         ) {
             items(apps.ifEmpty { emptyList() }) { app ->
-                AppTile(app = app) { success ->
-                    coroutineScope.launch {
-                        if (success) {
-                            graphifyRepo.logAppOpened(app.packageName, app.label)
-                            graphifyRepo.logTask("Open ${app.label}", "Opened ${app.label}")
-                            appsUsedCount = graphifyRepo.getMostUsedApps(1000).size
-                        } else {
-                            graphifyRepo.logTask("Open ${app.label}", "Failed to launch ${app.label}")
-                        }
-                        recentTasks = graphifyRepo.getRecentTasks(10)
-                        mostUsedApps = graphifyRepo.getMostUsedApps(4).ifEmpty { mostUsedApps }
-                    }
-                }
+                AppTile(app = app) { success -> onAppLaunched(app, success) }
             }
         }
     }
