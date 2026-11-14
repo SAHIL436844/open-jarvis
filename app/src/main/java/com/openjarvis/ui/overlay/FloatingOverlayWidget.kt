@@ -16,9 +16,10 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -89,31 +90,8 @@ fun FloatingOverlayWidget(
     AnimatedContent(
         targetState = isExpanded,
         transitionSpec = {
-            if (targetState) {
-                (expandHorizontally(
-                    animationSpec = spring(
-                        stiffness = Spring.StiffnessMedium,
-                        dampingRatio = 0.8f
-                    )
-                ) + expandVertically(
-                    animationSpec = spring(
-                        stiffness = 260f,
-                        dampingRatio = 0.8f
-                    )
-                ) + fadeIn(animationSpec = tween(150, delayMillis = 240))) togetherWith fadeOut(animationSpec = tween(100))
-            } else {
-                (shrinkHorizontally(
-                    animationSpec = spring(
-                        stiffness = Spring.StiffnessMedium,
-                        dampingRatio = 0.8f
-                    )
-                ) + shrinkVertically(
-                    animationSpec = spring(
-                        stiffness = Spring.StiffnessMedium,
-                        dampingRatio = 0.8f
-                    )
-                ) + fadeOut(animationSpec = tween(100))) togetherWith fadeIn(animationSpec = tween(150))
-            }
+            fadeIn(animationSpec = tween(180)) togetherWith
+                fadeOut(animationSpec = tween(120))
         },
         label = "overlay_expand"
     ) { expanded ->
@@ -598,7 +576,7 @@ private fun InputRowWithVoice(
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(
-                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowUp,
+                    imageVector = Icons.Filled.KeyboardArrowUp,
                     contentDescription = "Send",
                     tint = Color.White,
                     modifier = Modifier.size(16.dp)
