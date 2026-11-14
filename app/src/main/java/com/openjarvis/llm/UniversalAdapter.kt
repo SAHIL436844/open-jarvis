@@ -20,12 +20,16 @@ class UniversalAdapter(private val context: Context) {
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
     )
     
-    fun getActiveProvider(): LLMProvider {
-        val name = prefs.getString("provider_name", "Groq") ?: "Groq"
+    fun getActiveProvider(): LLMProvider = getProvider(getProviderName())
+
+    fun getProvider(providerName: String): LLMProvider {
+        val name = providerName
         val baseUrl = prefs.getString("provider_base_url", "") ?: ""
         val apiKey = prefs.getString("provider_api_key", "") ?: ""
-        val model = prefs.getString("provider_model", "") ?: getDefaultModel(name)
-        
+        val model = prefs.getString("provider_model", "")
+            ?.takeIf { it.isNotBlank() }
+            ?: getDefaultModel(name)
+
         return when (name) {
             "Groq" -> GroqProvider(apiKey, model)
             "Google Gemini", "gemini" -> GeminiProvider(apiKey, model)
@@ -42,7 +46,7 @@ class UniversalAdapter(private val context: Context) {
             else -> CustomProvider(baseUrl, apiKey, model)
         }
     }
-    
+
     suspend fun complete(
         systemPrompt: String,
         userMessage: String
