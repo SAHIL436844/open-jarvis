@@ -15,6 +15,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Task
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -671,7 +673,7 @@ private fun BottomNavBar(
                 thickness = 1.dp,
                 color = VoidColor.BorderSubtle
             )
-            
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -680,42 +682,39 @@ private fun BottomNavBar(
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
                 val items = listOf("Home", "Tasks", "Settings")
-                
-                items.forEachIndexed { index, item ->
-                    val isSelected = item == "Home" || item == "Tasks"
+
+                items.forEach { item ->
                     val isSettings = item == "Settings"
-                    
+                    val icon = when (item) {
+                        "Home" -> Icons.Filled.Home
+                        "Tasks" -> Icons.Filled.History
+                        else -> Icons.Filled.Settings
+                    }
+                    val tint = if (isSettings) VoidColor.TextDisabled else VoidColor.Violet
+
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.clickable {
-                            if (isSettings) onSettingsClick() else if (item == "Tasks") onTasksClick()
-                        }
-                    ) {
-                        if (isSelected) {
-                            Surface(
-                                shape = RoundedCornerShape(24.dp),
-                                color = VoidColor.Violet.copy(alpha = 0.08f)
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        imageVector = if (item == "Home") Icons.Filled.Task else Icons.Filled.Task,
-                                        contentDescription = item,
-                                        tint = VoidColor.Violet,
-                                        modifier = Modifier.size(22.dp)
-                                    )
+                        verticalArrangement = Arrangement.Center,
+                        modifier = Modifier
+                            .clickable {
+                                when (item) {
+                                    "Tasks" -> onTasksClick()
+                                    "Settings" -> onSettingsClick()
                                 }
                             }
-                        } else {
-                            Icon(
-                                imageVector = Icons.Filled.Settings,
-                                contentDescription = item,
-                                tint = VoidColor.TextDisabled,
-                                modifier = Modifier.size(22.dp)
-                            )
-                        }
+                            .padding(horizontal = 20.dp, vertical = 4.dp)
+                    ) {
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = item,
+                            tint = tint,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Text(
+                            text = item,
+                            color = tint,
+                            style = MaterialTheme.typography.labelSmall
+                        )
                     }
                 }
             }
