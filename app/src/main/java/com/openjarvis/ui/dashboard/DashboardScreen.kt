@@ -18,6 +18,8 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Task
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalContext
+import android.content.Intent
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -56,9 +58,25 @@ fun DashboardScreen(
     var tasksAlpha by remember { mutableFloatStateOf(0f) }
     var appsAlpha by remember { mutableFloatStateOf(0f) }
     
+    val context = LocalContext.current
     LaunchedEffect(Unit) {
         recentTasks = graphifyRepo.getRecentTasks(10)
-        mostUsedApps = graphifyRepo.getMostUsedApps(4)
+        val recordedApps = graphifyRepo.getMostUsedApps(4)
+        mostUsedApps = if (recordedApps.isNotEmpty()) recordedApps else {
+            context.packageManager.queryIntentActivities(
+                Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0
+            ).mapNotNull { info ->
+                val activityInfo = info.activityInfo ?: return@mapNotNull null
+                AppNode(
+                    packageName = activityInfo.packageName,
+                    label = info.loadLabel(context.packageManager).toString(),
+                    useCount = 0
+                )
+            }.distinctBy { it.packageName }
+                .filterNot { it.packageName == context.packageName }
+                .sortedBy { it.label.lowercase() }
+                .take(12)
+        }
     }
     
     LaunchedEffect(Unit) {
@@ -537,7 +555,12 @@ private fun QuickAppsSection(apps: List<AppNode>, alpha: Float) {
 
 @Composable
 private fun AppTile(app: AppNode) {
+    val context = LocalContext.current
     Surface(
+        onClick = {
+            val intent = context.packageManager.getLaunchIntentForPackage(app.packageName)
+            if (intent != null) context.startActivity(intent)
+        },
         modifier = Modifier
             .aspectRatio(1f)
             .height(100.dp),
