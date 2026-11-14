@@ -161,17 +161,27 @@ fun executeTask(cleanCommand: String) {
                         
                         _state.value = AgentState.Running("executing ${actions.size} actions...")
                         
-                        executeActions(actions)
-                        
+                        val executionError = executeActions(actions)
+                        if (executionError != null) {
+                            _state.value = AgentState.Error(executionError)
+                            graphifyRepo.logTask(
+                                command = cleanCommand,
+                                result = "failed: $executionError",
+                                provider = universalAdapter.getProviderName(),
+                                latencyMs = latency
+                            )
+                            return@fold
+                        }
+
                         graphifyRepo.logTask(
                             command = cleanCommand,
                             result = "success",
                             provider = universalAdapter.getProviderName(),
                             latencyMs = latency
                         )
-                        
+
                         analysisEngine.analyzeLastTask()
-                        
+
                         _state.value = AgentState.Done("done in ${latency}ms")
                     },
                     onFailure = { error ->
@@ -212,75 +222,101 @@ fun executeTask(cleanCommand: String) {
     
     suspend fun getAIAppCount(): Int = appAnalyzer.getAICount()
 
-    private suspend fun executeActions(actions: List<Action>) {
+    /**
+     * Executes actions sequentially and returns null only when every action succeeds.
+     * A non-null result is shown to the user and recorded as a failed task.
+     */
+    private suspend fun executeActions(actions: List<Action>): String? {
+        if (actions.isEmpty()) return "The AI returned an empty action plan"
+
         for ((index, action) in actions.withIndex()) {
             _state.value = AgentState.Running("action ${index + 1}/${actions.size}")
-            
-            when (action.action) {
+
+            val service = JarvisAccessibilityService.instance
+            val error = when (action.action) {
                 Action.OPEN_APP -> {
-                    val label = action.label
-                    if (label != null) {
-                        val packageName = findPackageByLabel(label)
-                        if (packageName != null) {
-                            JarvisAccessibilityService.instance?.openAppByPackage(packageName)
-                            graphifyRepo.logAppOpened(packageName, label)
+                    val packageName = action.packageName ?: action.label?.let { findPackageByLabel(it) }
+                    if (packageName == null) {
+                        "App not found: ${action.label ?: "no package or label provided"}"
+                    } else if (service == null) {
+                        "Accessibility service is not connected"
+                    } else {
+                        val opened = service.openAppByPackage(packageName)
+                        if (opened) {
+                            graphifyRepo.logAppOpened(packageName, action.label ?: packageName)
+                            null
                         } else {
-                            _state.value = AgentState.Error("App not found: $label")
-                            return
+                            "Could not open app: ${action.label ?: packageName}"
                         }
                     }
                 }
                 Action.TAP -> {
-                    action.text?.let { text ->
-                        JarvisAccessibilityService.instance?.tapByText(text)
+                    val text = action.text
+                    when {
+                        text.isNullOrBlank() -> "Tap action has no target text"
+                        service == null -> "Accessibility service is not connected"
+                        service.tapByText(text) -> null
+                        else -> "Could not tap: $text"
                     }
                 }
                 Action.TYPE -> {
-                    action.value?.let { value ->
-                        JarvisAccessibilityService.instance?.typeText(value)
+                    val value = action.value
+                    when {
+                        value == null -> "Type action has no value"
+                        service == null -> "Accessibility service is not connected"
+                        service.typeText(value) -> null
+                        else -> "Could not type text"
                     }
                 }
-                Action.PRESS_BACK -> {
-                    JarvisAccessibilityService.instance?.pressBack()
-                }
-                Action.PRESS_HOME -> {
-                    JarvisAccessibilityService.instance?.pressHome()
-                }
-                Action.PRESS_RECENTS -> {
-                    JarvisAccessibilityService.instance?.pressRecents()
-                }
+                Action.PRESS_BACK -> if (service?.pressBack() == true) null else "Back action failed or accessibility service is disconnected"
+                Action.PRESS_HOME -> if (service?.pressHome() == true) null else "Home action failed or accessibility service is disconnected"
+                Action.PRESS_RECENTS -> if (service?.pressRecents() == true) null else "Recents action failed or accessibility service is disconnected"
                 Action.AI_PROMPT -> {
                     val packageName = action.packageName
-                    val prompt = workingMemory.interpolate(action.prompt ?: "")
-                    val outputKey = action.outputKey
-                    
-                    if (packageName != null) {
-                        val meta = AIApps.KNOWN_AI_APPS[packageName]
-                        if (meta != null) {
+                    val meta = packageName?.let { AIApps.KNOWN_AI_APPS[it] }
+                    if (meta == null) {
+                        "Unsupported AI app: ${packageName ?: "package not provided"}"
+                    } else {
+                        try {
+                            val prompt = workingMemory.interpolate(action.prompt ?: "")
                             aiAppInteractor.openAIApp(meta)
                             kotlinx.coroutines.delay(2000)
-                            aiAppInteractor.typePrompt(prompt)
-                            kotlinx.coroutines.delay(1000)
-                            val response = aiAppInteractor.waitForResponse()
-                            if (outputKey != null) {
-                                workingMemory.set(outputKey, response)
+                            if (!aiAppInteractor.typePrompt(prompt)) {
+                                "Could not enter prompt in AI app"
+                            } else {
+                                kotlinx.coroutines.delay(1000)
+                                val response = aiAppInteractor.waitForResponse()
+                                val outputKey = action.outputKey
+                                if (outputKey != null && response.isBlank()) {
+                                    "AI app returned no response"
+                                } else {
+                                    if (outputKey != null) workingMemory.set(outputKey, response)
+                                    null
+                                }
                             }
+                        } catch (e: Exception) {
+                            "AI app action failed: ${e.message ?: "unknown error"}"
                         }
                     }
                 }
                 Action.EXTRACT_TEXT -> {
-                    val outputKey = action.outputKey ?: "page_text"
-                    val text = screenReader.extractAllText()
-                    workingMemory.set(outputKey, text)
+                    try {
+                        val outputKey = action.outputKey ?: "page_text"
+                        val text = screenReader.extractAllText()
+                        workingMemory.set(outputKey, text)
+                        if (text.isBlank()) "Could not extract screen text" else null
+                    } catch (e: Exception) {
+                        "Screen text extraction failed: ${e.message ?: "unknown error"}"
+                    }
                 }
-                Action.ERROR -> {
-                    _state.value = AgentState.Error(action.message ?: "Task failed")
-                    return
-                }
+                Action.ERROR -> action.message ?: "The AI plan reported an error"
+                else -> "Unsupported action: ${action.action}"
             }
-            
+
+            if (error != null) return "Action ${index + 1}/${actions.size} (${action.action}) failed: $error"
             kotlinx.coroutines.delay(500)
         }
+        return null
     }
 
     private fun findPackageByLabel(label: String): String? {
