@@ -45,7 +45,7 @@ class JarvisNotificationListener : NotificationListenerService() {
         }
         val isMessaging = sbn.packageName in messagingApps
         val sender = if (isMessaging) {
-            extras.getCharSequence(Notification.EXTRA_SENDER_TEXT)?.toString()
+            title.takeIf { isMessaging && it.isNotBlank() }
         } else null
         return JarvisNotification(
             id = sbn.id,

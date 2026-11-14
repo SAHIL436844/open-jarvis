@@ -17,6 +17,7 @@ class ScreenshotCapture(private val context: Context) {
     private var handlerThread: HandlerThread? = null
     private var handler: Handler? = null
     private var capturing = false
+    private var projectionCallback: MediaProjection.Callback? = null
 
     fun startCapture(): Boolean = capturing && virtualDisplay != null
 
@@ -31,6 +32,17 @@ class ScreenshotCapture(private val context: Context) {
         val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
         mediaProjection = projection
         imageReader = reader
+        val callback = object : MediaProjection.Callback() {
+            override fun onStop() {
+                capturing = false
+                virtualDisplay?.release()
+                virtualDisplay = null
+                imageReader?.close()
+                imageReader = null
+            }
+        }
+        projection.registerCallback(callback, handler)
+        projectionCallback = callback
         virtualDisplay = projection.createVirtualDisplay(
             "OpenJarvisScreenshot", width, height, density,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
@@ -64,6 +76,10 @@ class ScreenshotCapture(private val context: Context) {
         virtualDisplay = null
         imageReader?.close()
         imageReader = null
+        projectionCallback?.let { callback ->
+            mediaProjection?.unregisterCallback(callback)
+        }
+        projectionCallback = null
         mediaProjection?.stop()
         mediaProjection = null
         handlerThread?.quitSafely()
