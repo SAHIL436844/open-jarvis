@@ -13,9 +13,6 @@ jobs:
   debug-apk:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      ANDROID_HOME: /usr/local/lib/android/sdk
-      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,8 +28,10 @@ jobs:
         with:
           gradle-version: "8.5"
 
-      - name: Install Android SDK packages
-        run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
+      - name: Set up Android SDK and required packages
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platforms;android-34,build-tools;34.0.0"
 
       - name: Compile debug APK
         run: gradle assembleDebug --no-daemon --stacktrace
