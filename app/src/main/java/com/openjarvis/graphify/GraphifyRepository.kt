@@ -200,6 +200,19 @@ class GraphifyRepository(context: Context) {
         patternNodeDao.getByHash("").let { }
     }
 
+    suspend fun logProviderFailure(providerName: String) = withContext(Dispatchers.IO) {
+        val current = providerNodeDao.getByName(providerName)
+        if (current == null) {
+            providerNodeDao.insert(
+                ProviderNode(providerName = providerName, useCount = 1, successCount = 0)
+            )
+        } else {
+            providerNodeDao.update(
+                current.copy(lastUsed = System.currentTimeMillis(), useCount = current.useCount + 1)
+            )
+        }
+    }
+
     suspend fun insertProvider(provider: ProviderNode): Long = withContext(Dispatchers.IO) {
         providerNodeDao.insert(provider)
     }
