@@ -240,14 +240,12 @@ fun executeTask(cleanCommand: String) {
                         "App not found: ${action.label ?: "no package or label provided"}"
                     } else if (service == null) {
                         "Accessibility service is not connected"
+                    } else if (context.packageManager.getLaunchIntentForPackage(packageName) == null) {
+                        "No launchable app found for package: $packageName"
                     } else {
-                        val opened = service.openAppByPackage(packageName)
-                        if (opened) {
-                            graphifyRepo.logAppOpened(packageName, action.label ?: packageName)
-                            null
-                        } else {
-                            "Could not open app: ${action.label ?: packageName}"
-                        }
+                        service.openAppByPackage(packageName)
+                        graphifyRepo.logAppOpened(packageName, action.label ?: packageName)
+                        null
                     }
                 }
                 Action.TAP -> {
