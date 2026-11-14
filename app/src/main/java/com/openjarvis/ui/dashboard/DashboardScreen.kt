@@ -40,6 +40,7 @@ import com.openjarvis.graphify.nodes.AppNode
 import com.openjarvis.graphify.nodes.TaskNode
 import com.openjarvis.ui.theme.VoidColor
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -52,6 +53,9 @@ fun DashboardScreen(
     var recentTasks by remember { mutableStateOf<List<TaskNode>>(emptyList()) }
     var mostUsedApps by remember { mutableStateOf<List<AppNode>>(emptyList()) }
     var isSystemActive by remember { mutableStateOf(true) }
+    var appsUsedCount by remember { mutableIntStateOf(0) }
+    var showAllTasks by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
     
     var heroAlpha by remember { mutableFloatStateOf(0f) }
     var statsAlpha by remember { mutableFloatStateOf(0f) }
@@ -61,6 +65,7 @@ fun DashboardScreen(
     val context = LocalContext.current
     LaunchedEffect(Unit) {
         recentTasks = graphifyRepo.getRecentTasks(10)
+        appsUsedCount = graphifyRepo.getMostUsedApps(1000).size
         val recordedApps = graphifyRepo.getMostUsedApps(4)
         mostUsedApps = if (recordedApps.isNotEmpty()) recordedApps else {
             context.packageManager.queryIntentActivities(
@@ -111,11 +116,14 @@ fun DashboardScreen(
             
             Spacer(modifier = Modifier.height(16.dp))
             
-            StatsRow(tasks = recentTasks, alpha = statsAlpha)
+            StatsRow(tasks = recentTasks, appsUsed = appsUsedCount, alpha = statsAlpha)
             
             Spacer(modifier = Modifier.height(24.dp))
             
-            RecentTasksSection(tasks = recentTasks, alpha = tasksAlpha)
+            RecentTasksSection(tasks = recentTasks, alpha = tasksAlpha, onSeeAllTasks = {
+                coroutineScope.launch { recentTasks = graphifyRepo.getRecentTasks(100) }
+                showAllTasks = true
+            })
             
             Spacer(modifier = Modifier.height(24.dp))
             
@@ -124,8 +132,43 @@ fun DashboardScreen(
             Spacer(modifier = Modifier.height(32.dp))
         }
         
+        if (showAllTasks) {
+            AlertDialog(
+                onDismissRequest = { showAllTasks = false },
+                title = { Text("Recent Tasks") },
+                text = {
+                    Column(
+                        modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())
+                    ) {
+                        if (recentTasks.isEmpty()) {
+                            Text("No tasks recorded yet.")
+                        } else {
+                            recentTasks.forEach { task ->
+                                Text(
+                                    text = "${task.command} — ${task.result}",
+                                    modifier = Modifier.padding(vertical = 8.dp),
+                                    color = VoidColor.TextPrimary
+                                )
+                                HorizontalDivider(color = VoidColor.BorderSubtle)
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showAllTasks = false }) { Text("Close") }
+                },
+                containerColor = VoidColor.Void900,
+                titleContentColor = VoidColor.TextPrimary,
+                textContentColor = VoidColor.TextSecondary
+            )
+        }
+
         BottomNavBar(
             onSettingsClick = onOpenSettings,
+            onTasksClick = {
+                coroutineScope.launch { recentTasks = graphifyRepo.getRecentTasks(100) }
+                showAllTasks = true
+            },
             modifier = Modifier.align(Alignment.BottomCenter)
         )
     }
@@ -290,7 +333,7 @@ private fun StatusBadge(isActive: Boolean) {
 }
 
 @Composable
-private fun StatsRow(tasks: List<TaskNode>, alpha: Float) {
+private fun StatsRow(tasks: List<TaskNode>, appsUsed: Int, alpha: Float) {
     val animatedCount by animateIntAsState(
         targetValue = tasks.size.coerceAtLeast(0),
         animationSpec = tween(500, easing = EaseOutQuart),
@@ -308,7 +351,7 @@ private fun StatsRow(tasks: List<TaskNode>, alpha: Float) {
                 modifier = Modifier.weight(1f)
             )
             StatCard(
-                count = 0,
+                count = appsUsed,
                 label = "Apps Used",
                 modifier = Modifier.weight(1f)
             )
@@ -356,7 +399,7 @@ private fun StatCard(count: Int, label: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun RecentTasksSection(tasks: List<TaskNode>, alpha: Float) {
+private fun RecentTasksSection(tasks: List<TaskNode>, alpha: Float, onSeeAllTasks: () -> Unit = {}) {
     Column(modifier = Modifier.graphicsLayer(alpha = alpha)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -374,6 +417,7 @@ private fun RecentTasksSection(tasks: List<TaskNode>, alpha: Float) {
             )
             Text(
                 text = "see all →",
+                modifier = Modifier.clickable { onSeeAllTasks() },
                 style = TextStyle(
                     fontFamily = FontFamily.Default,
                     fontWeight = FontWeight(500),
@@ -547,19 +591,40 @@ private fun QuickAppsSection(apps: List<AppNode>, alpha: Float) {
             modifier = Modifier.height(220.dp)
         ) {
             items(apps.ifEmpty { emptyList() }) { app ->
-                AppTile(app = app)
+                AppTile(app = app) { success ->
+                    coroutineScope.launch {
+                        if (success) {
+                            graphifyRepo.logAppOpened(app.packageName, app.label)
+                            graphifyRepo.logTask("Open ${app.label}", "Opened ${app.label}")
+                            appsUsedCount = graphifyRepo.getMostUsedApps(1000).size
+                        } else {
+                            graphifyRepo.logTask("Open ${app.label}", "Failed to launch ${app.label}")
+                        }
+                        recentTasks = graphifyRepo.getRecentTasks(10)
+                        mostUsedApps = graphifyRepo.getMostUsedApps(4).ifEmpty { mostUsedApps }
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun AppTile(app: AppNode) {
+private fun AppTile(app: AppNode, onAppLaunched: (Boolean) -> Unit) {
     val context = LocalContext.current
     Surface(
         onClick = {
             val intent = context.packageManager.getLaunchIntentForPackage(app.packageName)
-            if (intent != null) context.startActivity(intent)
+            if (intent != null) {
+                try {
+                    context.startActivity(intent)
+                    onAppLaunched(true)
+                } catch (_: Exception) {
+                    onAppLaunched(false)
+                }
+            } else {
+                onAppLaunched(false)
+            }
         },
         modifier = Modifier
             .aspectRatio(1f)
@@ -593,6 +658,7 @@ private fun AppTile(app: AppNode) {
 @Composable
 private fun BottomNavBar(
     onSettingsClick: () -> Unit,
+    onTasksClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -622,7 +688,7 @@ private fun BottomNavBar(
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier.clickable {
-                            if (isSettings) onSettingsClick()
+                            if (isSettings) onSettingsClick() else if (item == "Tasks") onTasksClick()
                         }
                     ) {
                         if (isSelected) {
