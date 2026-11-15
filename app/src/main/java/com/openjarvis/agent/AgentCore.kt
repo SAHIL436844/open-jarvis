@@ -266,6 +266,70 @@ fun executeTask(cleanCommand: String) {
                         else -> "Could not type text"
                     }
                 }
+                Action.CLEAR_TYPE -> {
+                    val value = action.value
+                    when {
+                        value == null -> "Clear-and-type action has no value"
+                        service == null -> "Accessibility service is not connected"
+                        service.clearAndTypeText(value) -> null
+                        else -> "Could not clear and type text; focus an editable field first"
+                    }
+                }
+                Action.TAP_COORDS -> {
+                    val x = action.x
+                    val y = action.y
+                    when {
+                        x == null || y == null -> "Coordinate tap requires x and y"
+                        service == null -> "Accessibility service is not connected"
+                        service.tapCoordinates(x, y) -> null
+                        else -> "Coordinate tap failed or coordinates are outside the screen"
+                    }
+                }
+                Action.LONG_PRESS -> {
+                    val target = action.text
+                    when {
+                        target.isNullOrBlank() -> "Long-press action has no target text"
+                        service == null -> "Accessibility service is not connected"
+                        service.longPressByText(target) -> null
+                        else -> "Could not long-press: $target"
+                    }
+                }
+                Action.SWIPE, Action.SCROLL -> {
+                    val direction = action.direction
+                    when {
+                        direction.isNullOrBlank() -> "Swipe/scroll action requires a direction"
+                        service == null -> "Accessibility service is not connected"
+                        action.action == Action.SCROLL && direction !in listOf("up", "down") ->
+                            "Scroll direction must be up or down"
+                        service.swipe(direction, if (action.action == Action.SCROLL) "medium" else (action.distance ?: "medium")) -> null
+                        else -> "Swipe/scroll failed; use up, down, left, or right"
+                    }
+                }
+                Action.WAIT_FOR -> {
+                    val expected = action.text
+                    when {
+                        expected.isNullOrBlank() -> "wait_for requires target text"
+                        action.timeoutMs <= 0L -> "wait_for timeout must be positive"
+                        else -> {
+                            val deadline = System.currentTimeMillis() + action.timeoutMs.coerceAtMost(30_000L)
+                            var found = false
+                            while (System.currentTimeMillis() < deadline && !found) {
+                                found = screenReader.extractAllText().contains(expected, ignoreCase = true)
+                                if (!found) kotlinx.coroutines.delay(250)
+                            }
+                            if (found) null else "Timed out waiting for: $expected"
+                        }
+                    }
+                }
+                Action.READ_SCREEN -> {
+                    val text = screenReader.extractAllText()
+                    if (text.isBlank()) "Screen reader returned no visible text"
+                    else {
+                        action.outputKey?.let { workingMemory.set(it, text) }
+                        null
+                    }
+                }
+                Action.SCREENSHOT -> "Screenshot capture is not implemented yet; use read_screen for accessible on-screen text"
                 Action.PRESS_BACK -> if (service?.pressBack() == true) null else "Back action failed or accessibility service is disconnected"
                 Action.PRESS_HOME -> if (service?.pressHome() == true) null else "Home action failed or accessibility service is disconnected"
                 Action.PRESS_RECENTS -> if (service?.pressRecents() == true) null else "Recents action failed or accessibility service is disconnected"
@@ -277,19 +341,22 @@ fun executeTask(cleanCommand: String) {
                     } else {
                         try {
                             val prompt = workingMemory.interpolate(action.prompt ?: "")
-                            aiAppInteractor.openAIApp(meta)
-                            kotlinx.coroutines.delay(2000)
-                            if (!aiAppInteractor.typePrompt(prompt)) {
-                                "Could not enter prompt in AI app"
+                            if (!aiAppInteractor.openAIApp(meta)) {
+                                "Could not open AI app: ${meta.packageName}"
                             } else {
-                                kotlinx.coroutines.delay(1000)
-                                val response = aiAppInteractor.waitForResponse()
-                                val outputKey = action.outputKey
-                                if (outputKey != null && response.isBlank()) {
-                                    "AI app returned no response"
+                                kotlinx.coroutines.delay(2000)
+                                if (!aiAppInteractor.typePrompt(prompt)) {
+                                    "Could not enter prompt in AI app"
                                 } else {
-                                    if (outputKey != null) workingMemory.set(outputKey, response)
-                                    null
+                                    kotlinx.coroutines.delay(1000)
+                                    val response = aiAppInteractor.waitForResponse()
+                                    val outputKey = action.outputKey
+                                    if (outputKey != null && response.isBlank()) {
+                                        "AI app returned no response"
+                                    } else {
+                                        if (outputKey != null) workingMemory.set(outputKey, response)
+                                        null
+                                    }
                                 }
                             }
                         } catch (e: Exception) {
