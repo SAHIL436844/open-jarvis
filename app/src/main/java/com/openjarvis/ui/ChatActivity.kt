@@ -28,6 +28,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.openjarvis.agent.AgentCore
+import com.openjarvis.llm.UniversalAdapter
 import com.openjarvis.ui.theme.OpenJarvisTheme
 import com.openjarvis.ui.theme.VoidColor
 import com.openjarvis.voice.VoiceManager
@@ -78,7 +79,14 @@ private fun ChatScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var draft by remember { mutableStateOf("") }
-    var ultronMode by remember { mutableStateOf(false) }
+    var persona by remember { mutableStateOf("JARVIS") }
+    var showMythosSettings by remember { mutableStateOf(false) }
+    val adapter = remember { UniversalAdapter(context) }
+    var mythosProvider by remember { mutableStateOf("Groq") }
+    var mythosModel by remember { mutableStateOf("llama-3.1-70b-versatile") }
+    var mythosApiKey by remember { mutableStateOf("") }
+    var mythosBaseUrl by remember { mutableStateOf("") }
+    var showProviderChoices by remember { mutableStateOf(false) }
     var messages by remember { mutableStateOf(listOf(ChatMessage("I\u0027m JARVIS. Send me a device task, or tap the microphone to speak.", false))) }
     var listening by remember { mutableStateOf(false) }
     var working by remember { mutableStateOf(false) }
@@ -91,7 +99,17 @@ private fun ChatScreen(
         draft = ""
         working = true
         messages = messages + ChatMessage("Working on it…", false)
-        agentCore.executeTask(command, if (ultronMode) "ULTRON" else "JARVIS")
+        agentCore.executeTask(command, persona)
+    }
+
+    LaunchedEffect(showMythosSettings) {
+        if (showMythosSettings) {
+            val settings = adapter.getPersonaSettings("mythos")
+            mythosProvider = settings.provider
+            mythosModel = settings.model
+            mythosApiKey = settings.apiKey
+            mythosBaseUrl = settings.baseUrl
+        }
     }
 
     LaunchedEffect(agentState) {
@@ -137,13 +155,15 @@ private fun ChatScreen(
         containerColor = VoidColor.Void950,
         topBar = {
             TopAppBar(
-                title = { Text(if (ultronMode) "ULTRON Chat" else "JARVIS Chat", color = if (ultronMode) Color(0xFFFF4655) else VoidColor.TextPrimary) },
+                title = { Text("$persona Chat", color = when (persona) { "ULTRON" -> Color(0xFFFF4655); "MYTHOS" -> Color(0xFFFFB74D); else -> VoidColor.TextPrimary }) },
                 actions = {
+                    if (persona == "MYTHOS") TextButton(onClick = { showMythosSettings = true }) { Text("MYTHOS ⚙", color = Color(0xFFFFB74D)) }
                     TextButton(onClick = {
-                        ultronMode = !ultronMode
-                        messages = messages + ChatMessage(if (ultronMode) "ULTRON mode enabled. Strategic persona active; Android actions remain shared." else "JARVIS mode enabled.", false)
+                        persona = when (persona) { "JARVIS" -> "ULTRON"; "ULTRON" -> "MYTHOS"; else -> "JARVIS" }
+                        messages = messages + ChatMessage("Active persona: $persona. Mythos has separate provider settings.", false)
                     }) {
-                        Text(if (ultronMode) "ULTRON ●" else "JARVIS ◉", color = if (ultronMode) Color(0xFFFF4655) else VoidColor.Violet)
+                        Text(when (persona) { "ULTRON" -> "ULTRON ●"; "MYTHOS" -> "MYTHOS ◈"; else -> "JARVIS ◉" },
+                            color = when (persona) { "ULTRON" -> Color(0xFFFF4655); "MYTHOS" -> Color(0xFFFFB74D); else -> VoidColor.Violet })
                     }
                 },
                 navigationIcon = {
@@ -165,7 +185,7 @@ private fun ChatScreen(
                     value = draft,
                     onValueChange = { draft = it },
                     modifier = Modifier.weight(1f),
-                    placeholder = { Text(if (ultronMode) "Give ULTRON a task…" else "Tell JARVIS what to do…") },
+                    placeholder = { Text("Tell $persona what to do…") },
                     enabled = !working,
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
@@ -224,5 +244,41 @@ private fun ChatScreen(
                 }
             }
         }
+    }
+
+    if (showMythosSettings) {
+        AlertDialog(
+            onDismissRequest = { showMythosSettings = false },
+            title = { Text("Mythos model settings") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Independent encrypted settings. Choose a supported provider and model ID.")
+                    TextButton(onClick = { showProviderChoices = true }) { Text("Provider: $mythosProvider") }
+                    DropdownMenu(expanded = showProviderChoices, onDismissRequest = { showProviderChoices = false }) {
+                        UniversalAdapter.AVAILABLE_PROVIDERS.forEach { option ->
+                            DropdownMenuItem(text = { Text(option) }, onClick = {
+                                mythosProvider = option
+                                mythosModel = UniversalAdapter.getDefaultModel(option)
+                                mythosBaseUrl = if (option == "Ollama (Local)") "http://localhost:11434" else ""
+                                showProviderChoices = false
+                            })
+                        }
+                    }
+                    OutlinedTextField(value = mythosModel, onValueChange = { mythosModel = it }, label = { Text("Model ID") }, singleLine = true)
+                    OutlinedTextField(value = mythosApiKey, onValueChange = { mythosApiKey = it }, label = { Text("API key") }, singleLine = true)
+                    if (mythosProvider == "Custom" || mythosProvider == "Ollama (Local)") {
+                        OutlinedTextField(value = mythosBaseUrl, onValueChange = { mythosBaseUrl = it }, label = { Text("Base URL") }, singleLine = true)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    adapter.savePersonaSettings("mythos", mythosProvider, mythosBaseUrl, mythosApiKey, mythosModel)
+                    showMythosSettings = false
+                    messages = messages + ChatMessage("Mythos settings saved separately from JARVIS.", false)
+                }) { Text("Save") }
+            },
+            dismissButton = { TextButton(onClick = { showMythosSettings = false }) { Text("Cancel") } }
+        )
     }
 }
