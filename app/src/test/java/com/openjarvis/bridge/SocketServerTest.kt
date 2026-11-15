@@ -54,13 +54,12 @@ class SocketServerTest {
     }
 
     @Test
-    fun errorResponseContainsValidEscapedFields() {
+    fun errorResponseIsValidJsonWithEscapedFields() {
         val response = SocketServer.errorResponse("req\"123", "line 1\nline 2")
-        assertTrue(response.startsWith("{"))
-        assertTrue(response.endsWith("}"))
-        assertTrue(response.contains("\"requestId\":\"req\\\"123\""))
-        assertTrue(response.contains("\"status\":\"error\""))
-        assertTrue(response.contains("\"result\":\"line 1\\nline 2\""))
+        val parsed = org.json.JSONObject(response)
+        assertEquals("req\"123", parsed.getString("requestId"))
+        assertEquals("error", parsed.getString("status"))
+        assertEquals("line 1\nline 2", parsed.getString("result"))
     }
 
     @Test
