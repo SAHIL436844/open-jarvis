@@ -96,7 +96,7 @@ private fun ChatScreen(
         when (val state = agentState) {
             is com.openjarvis.agent.AgentState.Done -> {
                 if (working) {
-                    messages = messages.dropLast(1) + ChatMessage("Completed: ${state.message}", false)
+                    messages = messages.dropLast(1) + ChatMessage("Completed: ${state.result}", false)
                     working = false
                 }
             }
@@ -107,7 +107,7 @@ private fun ChatScreen(
                 }
             }
             else -> if (working && state is com.openjarvis.agent.AgentState.Running) {
-                messages = messages.dropLast(1) + ChatMessage("Working: ${state.status}", false)
+                messages = messages.dropLast(1) + ChatMessage("Working: ${state.step}", false)
             }
         }
     }
