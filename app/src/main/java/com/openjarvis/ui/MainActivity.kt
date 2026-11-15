@@ -62,7 +62,7 @@ class MainActivity : ComponentActivity() {
                     DashboardScreen(
                         onStartOverlay = { startOverlayService() },
                         onOpenSettings = { openSettings() },
-                        onOpenChat = { startActivity(Intent(this@MainActivity, ChatActivity::class.java)) },
+                        onChatClick = { startActivity(Intent(this@MainActivity, ChatActivity::class.java)) },
                         graphifyRepo = graphifyRepo,
                         modifier = Modifier.fillMaxSize()
                     )
