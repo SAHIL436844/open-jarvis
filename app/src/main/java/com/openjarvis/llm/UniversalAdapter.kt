@@ -84,15 +84,21 @@ class UniversalAdapter(private val context: Context) {
         )
     }
 
-    fun savePersonaSettings(persona: String, provider: String, baseUrl: String, apiKey: String, model: String) {
+    fun savePersonaSettings(persona: String, provider: String, baseUrl: String, apiKey: String, model: String): Boolean {
         val prefix = persona.lowercase() + "_"
-        prefs.edit().apply {
-            putString(prefix + "provider", provider)
-            putString(prefix + "base_url", baseUrl)
-            putString(prefix + "api_key", apiKey)
-            putString(prefix + "model", model)
-            apply()
-        }
+        // Commit synchronously so the dialog can safely close and settings survive an
+        // immediate Activity/app restart. Verify the non-secret fields after writing.
+        val saved = prefs.edit()
+            .putString(prefix + "provider", provider)
+            .putString(prefix + "base_url", baseUrl)
+            .putString(prefix + "api_key", apiKey)
+            .putString(prefix + "model", model)
+            .commit()
+        return saved &&
+            prefs.getString(prefix + "provider", null) == provider &&
+            prefs.getString(prefix + "base_url", null) == baseUrl &&
+            prefs.getString(prefix + "api_key", null) == apiKey &&
+            prefs.getString(prefix + "model", null) == model
     }
 
     suspend fun completeForPersona(persona: String, systemPrompt: String, userMessage: String): Result<String> {
