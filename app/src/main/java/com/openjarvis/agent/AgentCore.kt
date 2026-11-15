@@ -122,9 +122,13 @@ fun executeTask(cleanCommand: String, persona: String = "JARVIS") {
                 
                 val personaPrompt = systemPrompt.replace(
                     "You are Open Jarvis — an Android device control AI agent.",
-                    if (persona.equals("ULTRON", ignoreCase = true))
-                        "You are ULTRON, a precise and strategic Android device control AI agent. Use concise, analytical language. Stay within the same allowed device actions and safety rules."
-                    else "You are Open Jarvis — an Android device control AI agent."
+                    when {
+                        persona.equals("ULTRON", ignoreCase = true) ->
+                            "You are ULTRON, a precise and strategic Android device control AI agent. Use concise, analytical language. Stay within the same allowed device actions and safety rules."
+                        persona.equals("MYTHOS", ignoreCase = true) ->
+                            "You are MYTHOS, an experimental analytical Android assistant. Be rigorous, explore alternatives, and return only valid JSON actions from the allowed list. Never exceed the same action permissions, confirmation rules, or safety limits."
+                        else -> "You are Open Jarvis — an Android device control AI agent."
+                    }
                 )
                 val fullSystem = personaPrompt
                     .replace("{SCREEN_OCR}", screenText.take(2000))
@@ -136,7 +140,7 @@ fun executeTask(cleanCommand: String, persona: String = "JARVIS") {
                 
                 val startTime = System.currentTimeMillis()
                 
-                val result = universalAdapter.complete(fullSystem, cleanCommand)
+                val result = if (persona.equals("MYTHOS", ignoreCase = true)) universalAdapter.completeForPersona("mythos", fullSystem, cleanCommand) else universalAdapter.complete(fullSystem, cleanCommand)
                 result.fold(
                     onSuccess = { rawJson ->
                         val latency = System.currentTimeMillis() - startTime
@@ -152,10 +156,10 @@ fun executeTask(cleanCommand: String, persona: String = "JARVIS") {
                         
                         val actions = ActionJsonParser.parse(rawForParsing)
                             ?: run {
-                                val retry = universalAdapter.complete(
-                                    fullSystem,
-                                    "$cleanCommand\n\nRespond with JSON array ONLY. No other text."
-                                )
+                                val retryPrompt = "$cleanCommand\n\nRespond with JSON array ONLY. No other text."
+                                val retry = if (persona.equals("MYTHOS", ignoreCase = true))
+                                    universalAdapter.completeForPersona("mythos", fullSystem, retryPrompt)
+                                else universalAdapter.complete(fullSystem, retryPrompt)
                                 retry.getOrNull()?.let { ActionJsonParser.parse(it) }
                             }
                         
