@@ -273,9 +273,13 @@ private fun ChatScreen(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    adapter.savePersonaSettings("mythos", mythosProvider, mythosBaseUrl, mythosApiKey, mythosModel)
-                    showMythosSettings = false
-                    messages = messages + ChatMessage("Mythos settings saved separately from JARVIS.", false)
+                    val saved = adapter.savePersonaSettings("mythos", mythosProvider, mythosBaseUrl, mythosApiKey, mythosModel)
+                    if (saved) {
+                        showMythosSettings = false
+                        messages = messages + ChatMessage("Mythos settings saved and verified.", false)
+                    } else {
+                        messages = messages + ChatMessage("Couldn't verify saved Mythos settings. Keep this dialog open and try again.", false)
+                    }
                 }) { Text("Save") }
             },
             dismissButton = { TextButton(onClick = { showMythosSettings = false }) { Text("Cancel") } }
