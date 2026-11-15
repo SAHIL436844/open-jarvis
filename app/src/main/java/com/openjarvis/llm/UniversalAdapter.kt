@@ -23,27 +23,40 @@ class UniversalAdapter(private val context: Context) {
     fun getActiveProvider(): LLMProvider = getProvider(getProviderName())
 
     fun getProvider(providerName: String): LLMProvider {
-        val name = providerName
         val baseUrl = prefs.getString("provider_base_url", "") ?: ""
         val apiKey = prefs.getString("provider_api_key", "") ?: ""
         val model = prefs.getString("provider_model", "")
             ?.takeIf { it.isNotBlank() }
-            ?: getDefaultModel(name)
+            ?: getDefaultModel(providerName)
+        return createProvider(providerName, baseUrl, apiKey, model)
+    }
 
+    /**
+     * Creates a provider from the supplied settings without persisting them.
+     * Used by Settings so connection checks can validate unsaved credentials.
+     */
+    fun createProvider(
+        providerName: String,
+        baseUrl: String,
+        apiKey: String,
+        model: String
+    ): LLMProvider {
+        val name = providerName
+        val resolvedModel = model.takeIf { it.isNotBlank() } ?: getDefaultModel(name)
         return when (name) {
-            "Groq" -> GroqProvider(apiKey, model)
-            "Google Gemini", "gemini" -> GeminiProvider(apiKey, model)
-            "OpenRouter" -> OpenRouterProvider(apiKey, model)
-            "Anthropic Claude" -> AnthropicProvider(apiKey, model)
-            "OpenAI" -> OpenAIProvider(apiKey, model)
-            "Ollama (Local)" -> OllamaProvider(baseUrl, model)
+            "Groq" -> GroqProvider(apiKey, resolvedModel)
+            "Google Gemini", "gemini" -> GeminiProvider(apiKey, resolvedModel)
+            "OpenRouter" -> OpenRouterProvider(apiKey, resolvedModel)
+            "Anthropic Claude" -> AnthropicProvider(apiKey, resolvedModel)
+            "OpenAI" -> OpenAIProvider(apiKey, resolvedModel)
+            "Ollama (Local)" -> OllamaProvider(baseUrl, resolvedModel)
             "Local (LlamaCpp)" -> {
                 val mm = getModelManager(context)
                 val tier = mm.getDownloadedTier() ?: ModelManager.ModelTier.MINIMUM
                 LlamaProvider(mm.getModelPath(tier), tier.displayName)
             }
-            "Custom" -> CustomProvider(baseUrl, apiKey, model)
-            else -> CustomProvider(baseUrl, apiKey, model)
+            "Custom" -> CustomProvider(baseUrl, apiKey, resolvedModel)
+            else -> CustomProvider(baseUrl, apiKey, resolvedModel)
         }
     }
 
