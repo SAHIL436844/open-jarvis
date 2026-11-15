@@ -77,7 +77,8 @@ private fun ChatScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var draft by remember { mutableStateOf("") }
-    var messages by remember { mutableStateOf(listOf(ChatMessage("I'm JARVIS. Send me a device task, or tap the microphone to speak.", false))) }
+    var ultronMode by remember { mutableStateOf(false) }
+    var messages by remember { mutableStateOf(listOf(ChatMessage("I\u0027m JARVIS. Send me a device task, or tap the microphone to speak.", false))) }
     var listening by remember { mutableStateOf(false) }
     var working by remember { mutableStateOf(false) }
     val agentState by agentCore.state.collectAsState()
@@ -89,7 +90,7 @@ private fun ChatScreen(
         draft = ""
         working = true
         messages = messages + ChatMessage("Working on it…", false)
-        agentCore.executeTask(command)
+        agentCore.executeTask(command, if (ultronMode) "ULTRON" else "JARVIS")
     }
 
     LaunchedEffect(agentState) {
@@ -135,7 +136,15 @@ private fun ChatScreen(
         containerColor = VoidColor.Void950,
         topBar = {
             TopAppBar(
-                title = { Text("JARVIS Chat", color = VoidColor.TextPrimary) },
+                title = { Text(if (ultronMode) "ULTRON Chat" else "JARVIS Chat", color = if (ultronMode) Color(0xFFFF4655) else VoidColor.TextPrimary) },
+                actions = {
+                    TextButton(onClick = {
+                        ultronMode = !ultronMode
+                        messages = messages + ChatMessage(if (ultronMode) "ULTRON mode enabled. Strategic persona active; Android actions remain shared." else "JARVIS mode enabled.", false)
+                    }) {
+                        Text(if (ultronMode) "ULTRON ●" else "JARVIS ◉", color = if (ultronMode) Color(0xFFFF4655) else VoidColor.Violet)
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = VoidColor.TextPrimary)
@@ -155,7 +164,7 @@ private fun ChatScreen(
                     value = draft,
                     onValueChange = { draft = it },
                     modifier = Modifier.weight(1f),
-                    placeholder = { Text("Tell JARVIS what to do…") },
+                    placeholder = { Text(if (ultronMode) "Give ULTRON a task…" else "Tell JARVIS what to do…") },
                     enabled = !working,
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
