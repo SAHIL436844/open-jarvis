@@ -3,7 +3,6 @@ package com.openjarvis.graphify
 import org.junit.Test
 import org.junit.Assert.*
 import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.Dispatchers
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
@@ -12,7 +11,7 @@ import org.robolectric.RuntimeEnvironment
 class AnalysisEngineTest {
 
     @Test
-    fun `three identical sequences should create pattern node with positive confidence`() = runTest(Dispatchers.IO) {
+    fun `three identical sequences should create pattern node with positive confidence`() = runTest {
         val context = testContext()
         val engine = AnalysisEngine(context)
         val repo = GraphifyRepository(context)
@@ -36,7 +35,7 @@ class AnalysisEngineTest {
     }
 
     @Test
-    fun `confidence decays after 7 days stale`() = runTest(Dispatchers.IO) {
+    fun `confidence decays after 7 days stale`() = runTest {
         val context = testContext()
         val engine = AnalysisEngine(context)
         val repo = GraphifyRepository(context)
@@ -65,7 +64,7 @@ class AnalysisEngineTest {
     }
 
     @Test
-    fun `contact fuzzy match within distance 2`() = runTest(Dispatchers.IO) {
+    fun `contact fuzzy match within distance 2`() = runTest {
         val context = testContext()
         val repo = GraphifyRepository(context)
 
