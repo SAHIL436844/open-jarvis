@@ -62,7 +62,21 @@ fun SettingsScreen(
     var sttMode by remember { mutableStateOf(sttModeInitial) }
     
     LaunchedEffect(selectedProvider) {
-        showBaseUrlField = selectedProvider == "Custom"
+        showBaseUrlField = selectedProvider == "Custom" || selectedProvider == "Ollama (Local)"
+        model = when (selectedProvider) {
+            "Groq" -> "llama-3.1-70b-versatile"
+            "Google Gemini" -> "gemini-1.5-flash"
+            "OpenRouter" -> "meta-llama/llama-3-8b-instruct:free"
+            "Anthropic Claude" -> "claude-haiku-4-20250514"
+            "OpenAI" -> "gpt-4o-mini"
+            "Ollama (Local)" -> "llama3"
+            else -> model
+        }
+        baseUrl = when (selectedProvider) {
+            "Ollama (Local)" -> "http://localhost:11434/v1"
+            "Custom" -> baseUrl
+            else -> ""
+        }
     }
     
     val scrollState = rememberScrollState()
@@ -640,7 +654,7 @@ private fun TestConnectionButton(
             is TestState.Success -> {
                 Icon(Icons.Default.Check, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Connected — ${state.ms}ms")
+                Text("Settings Saved")
             }
             is TestState.Error -> {
                 Text("Failed — check key")
