@@ -167,7 +167,50 @@ class GraphifyRepository(context: Context) {
     }
 
     suspend fun findContactByName(name: String): ContactNode? = withContext(Dispatchers.IO) {
-        contactNodeDao.findByNameOrPhone(name.lowercase(), "%${name}%")
+        val query = name.trim().lowercase().replace(Regex("\\s+"), " ")
+        if (query.isBlank()) return@withContext null
+
+        val exact = contactNodeDao.findByNameOrPhone(query, "%$query%")
+        if (exact != null) return@withContext exact
+
+        // Fuzzy matching is deliberately bounded to avoid returning unrelated contacts.
+        val candidates = contactNodeDao.getAllContacts()
+        candidates
+            .map { contact ->
+                val normalized = contact.name.trim().lowercase().replace(Regex("\\s+"), " ")
+                val distance = levenshteinDistance(query, normalized)
+                Triple(contact, distance, normalized.length)
+            }
+            .filter { (_, distance, length) ->
+                distance <= 2 && length > 0 && query.length > 0
+            }
+            .minWithOrNull(
+                compareBy<Triple<ContactNode, Int, Int>> { it.second }
+                    .thenByDescending { it.first.contactCount }
+            )
+            ?.first
+    }
+
+    private fun levenshteinDistance(left: String, right: String): Int {
+        if (left == right) return 0
+        if (left.isEmpty()) return right.length
+        if (right.isEmpty()) return left.length
+
+        var previous = IntArray(right.length + 1) { it }
+        for (i in left.indices) {
+            val current = IntArray(right.length + 1)
+            current[0] = i + 1
+            for (j in right.indices) {
+                val substitutionCost = if (left[i] == right[j]) 0 else 1
+                current[j + 1] = minOf(
+                    current[j] + 1,
+                    previous[j + 1] + 1,
+                    previous[j] + substitutionCost
+                )
+            }
+            previous = current
+        }
+        return previous[right.length]
     }
 
     suspend fun incrementContact(id: Long) = withContext(Dispatchers.IO) {
