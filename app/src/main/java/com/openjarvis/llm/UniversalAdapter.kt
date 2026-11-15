@@ -64,6 +64,42 @@ class UniversalAdapter(private val context: Context) {
         systemPrompt: String,
         userMessage: String
     ): Result<String> = getActiveProvider().complete(systemPrompt, userMessage)
+
+    data class PersonaSettings(
+        val provider: String,
+        val baseUrl: String,
+        val apiKey: String,
+        val model: String
+    )
+
+    fun getPersonaSettings(persona: String): PersonaSettings {
+        val prefix = persona.lowercase() + "_"
+        val provider = prefs.getString(prefix + "provider", "Groq") ?: "Groq"
+        return PersonaSettings(
+            provider = provider,
+            baseUrl = prefs.getString(prefix + "base_url", "") ?: "",
+            apiKey = prefs.getString(prefix + "api_key", "") ?: "",
+            model = prefs.getString(prefix + "model", getDefaultModel(provider))
+                ?.takeIf { it.isNotBlank() } ?: getDefaultModel(provider)
+        )
+    }
+
+    fun savePersonaSettings(persona: String, provider: String, baseUrl: String, apiKey: String, model: String) {
+        val prefix = persona.lowercase() + "_"
+        prefs.edit().apply {
+            putString(prefix + "provider", provider)
+            putString(prefix + "base_url", baseUrl)
+            putString(prefix + "api_key", apiKey)
+            putString(prefix + "model", model)
+            apply()
+        }
+    }
+
+    suspend fun completeForPersona(persona: String, systemPrompt: String, userMessage: String): Result<String> {
+        val settings = getPersonaSettings(persona)
+        return createProvider(settings.provider, settings.baseUrl, settings.apiKey, settings.model)
+            .complete(systemPrompt, userMessage)
+    }
     
     suspend fun testConnection(): Result<Long> = getActiveProvider().testConnection()
     
