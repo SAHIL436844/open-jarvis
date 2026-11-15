@@ -82,7 +82,7 @@ RULES:
 - If a task is impossible to do safely, return: [{"action":"error","message":"reason"}]
 """.trimIndent()
 
-fun executeTask(cleanCommand: String) {
+fun executeTask(cleanCommand: String, persona: String = "JARVIS") {
         workingMemory = TaskWorkingMemory()
         
         scope.launch {
@@ -120,7 +120,13 @@ fun executeTask(cleanCommand: String) {
                 
                 val memoryContext = graphifyRepo.buildMemoryContext(cleanCommand)
                 
-                val fullSystem = systemPrompt
+                val personaPrompt = systemPrompt.replace(
+                    "You are Open Jarvis — an Android device control AI agent.",
+                    if (persona.equals("ULTRON", ignoreCase = true))
+                        "You are ULTRON, a precise and strategic Android device control AI agent. Use concise, analytical language. Stay within the same allowed device actions and safety rules."
+                    else "You are Open Jarvis — an Android device control AI agent."
+                )
+                val fullSystem = personaPrompt
                     .replace("{SCREEN_OCR}", screenText.take(2000))
                     .replace("{APP_REASONING}", plan.reasoning)
                     .replace("{AI_APPS}", getInstalledAIApps())
