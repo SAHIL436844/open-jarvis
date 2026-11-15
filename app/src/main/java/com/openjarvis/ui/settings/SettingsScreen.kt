@@ -139,6 +139,7 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(24.dp))
                 
                 TestConnectionButton(
+                    provider = selectedProvider,
                     apiKey = apiKey,
                     baseUrl = baseUrl,
                     model = model,
@@ -591,6 +592,7 @@ fun FloatingLabelTextField(
 
 @Composable
 private fun TestConnectionButton(
+    provider: String,
     apiKey: String,
     baseUrl: String,
     model: String,
@@ -618,8 +620,8 @@ private fun TestConnectionButton(
     
     OutlinedButton(
         onClick = {
-            onSave("Groq", baseUrl, apiKey, model)
-            testState = TestState.Success(150)
+            onSave(provider, baseUrl, apiKey, model)
+            testState = TestState.Success(0)
         },
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -629,7 +631,7 @@ private fun TestConnectionButton(
         )
     ) {
         when (val state = testState) {
-            is TestState.Idle -> Text("Test Connection")
+            is TestState.Idle -> Text("Save API Settings")
             is TestState.Loading -> CircularProgressIndicator(
                 modifier = Modifier.size(16.dp),
                 strokeWidth = 2.dp,
