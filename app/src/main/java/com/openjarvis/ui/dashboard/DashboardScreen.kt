@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Task
+import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
@@ -49,6 +50,7 @@ import kotlinx.coroutines.launch
 fun DashboardScreen(
     onStartOverlay: () -> Unit,
     onOpenSettings: () -> Unit,
+    onChatClick: () -> Unit,
     graphifyRepo: GraphifyRepository,
     modifier: Modifier = Modifier
 ) {
@@ -179,6 +181,7 @@ fun DashboardScreen(
 
         BottomNavBar(
             onSettingsClick = onOpenSettings,
+            onChatClick = onChatClick,
             onTasksClick = {
                 coroutineScope.launch { recentTasks = graphifyRepo.getRecentTasks(100) }
                 showAllTasks = true
@@ -660,6 +663,7 @@ private fun AppTile(app: AppNode, onAppLaunched: (Boolean) -> Unit) {
 @Composable
 private fun BottomNavBar(
     onSettingsClick: () -> Unit,
+    onChatClick: () -> Unit,
     onTasksClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -681,12 +685,13 @@ private fun BottomNavBar(
                     .padding(vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                val items = listOf("Home", "Tasks", "Settings")
+                val items = listOf("Home", "Chat", "Tasks", "Settings")
 
                 items.forEach { item ->
                     val isSettings = item == "Settings"
                     val icon = when (item) {
                         "Home" -> Icons.Filled.Home
+                        "Chat" -> Icons.Filled.ChatBubbleOutline
                         "Tasks" -> Icons.Filled.History
                         else -> Icons.Filled.Settings
                     }
@@ -698,6 +703,7 @@ private fun BottomNavBar(
                         modifier = Modifier
                             .clickable {
                                 when (item) {
+                                    "Chat" -> onChatClick()
                                     "Tasks" -> onTasksClick()
                                     "Settings" -> onSettingsClick()
                                 }
