@@ -17,6 +17,8 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -80,6 +82,7 @@ fun SettingsScreen(
     }
     
     val scrollState = rememberScrollState()
+    val context = LocalContext.current
     
     Box(
         modifier = modifier
@@ -157,6 +160,7 @@ fun SettingsScreen(
                     apiKey = apiKey,
                     baseUrl = baseUrl,
                     model = model,
+                    context = context,
                     onSave = { name, url, key, mdl ->
                         onSaveProvider(name, url, key, mdl)
                         lastSaved = System.currentTimeMillis()
@@ -610,9 +614,11 @@ private fun TestConnectionButton(
     apiKey: String,
     baseUrl: String,
     model: String,
+    context: android.content.Context,
     onSave: (String, String, String, String) -> Unit
 ) {
     var testState by remember { mutableStateOf<TestState>(TestState.Idle) }
+    val scope = rememberCoroutineScope()
     
     val borderColor by animateColorAsState(
         targetValue = when (testState) {
@@ -634,8 +640,29 @@ private fun TestConnectionButton(
     
     OutlinedButton(
         onClick = {
-            onSave(provider, baseUrl, apiKey, model)
-            testState = TestState.Success(0)
+            if (testState !is TestState.Loading) {
+                testState = TestState.Loading
+                scope.launch {
+                    val result = runCatching {
+                        UniversalAdapter(context)
+                            .createProvider(provider, baseUrl, apiKey, model)
+                            .testConnection()
+                            .getOrThrow()
+                    }
+                    result.fold(
+                        onSuccess = { elapsedMs ->
+                            onSave(provider, baseUrl, apiKey, model)
+                            testState = TestState.Success(elapsedMs)
+                        },
+                        onFailure = { error ->
+                            val message = error.message.orEmpty()
+                            val safeMessage = Regex("HTTP\\s+\\d{3}", RegexOption.IGNORE_CASE)
+                                .find(message)?.value ?: "Connection failed; check key, model, and network"
+                            testState = TestState.Error(safeMessage)
+                        }
+                    )
+                }
+            }
         },
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -645,7 +672,7 @@ private fun TestConnectionButton(
         )
     ) {
         when (val state = testState) {
-            is TestState.Idle -> Text("Save API Settings")
+            is TestState.Idle -> Text("Test & Save API Settings")
             is TestState.Loading -> CircularProgressIndicator(
                 modifier = Modifier.size(16.dp),
                 strokeWidth = 2.dp,
@@ -654,10 +681,10 @@ private fun TestConnectionButton(
             is TestState.Success -> {
                 Icon(Icons.Default.Check, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Settings Saved")
+                Text("Connected — ${state.ms}ms")
             }
             is TestState.Error -> {
-                Text("Failed — check key")
+                Text(state.message)
             }
         }
     }
