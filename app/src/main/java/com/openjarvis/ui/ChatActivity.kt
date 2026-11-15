@@ -25,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.openjarvis.agent.AgentCore
@@ -265,7 +266,7 @@ private fun ChatScreen(
                         }
                     }
                     OutlinedTextField(value = mythosModel, onValueChange = { mythosModel = it }, label = { Text("Model ID") }, singleLine = true)
-                    OutlinedTextField(value = mythosApiKey, onValueChange = { mythosApiKey = it }, label = { Text("API key") }, singleLine = true)
+                    OutlinedTextField(value = mythosApiKey, onValueChange = { mythosApiKey = it }, label = { Text("API key") }, singleLine = true, visualTransformation = PasswordVisualTransformation())
                     if (mythosProvider == "Custom" || mythosProvider == "Ollama (Local)") {
                         OutlinedTextField(value = mythosBaseUrl, onValueChange = { mythosBaseUrl = it }, label = { Text("Base URL") }, singleLine = true)
                     }
