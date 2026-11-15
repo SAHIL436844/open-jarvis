@@ -12,12 +12,15 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.openjarvis.R
 import com.openjarvis.ui.settings.SettingsScreen
+import com.openjarvis.voice.STTMode
+import com.openjarvis.voice.VoiceManager
 import com.openjarvis.ui.theme.OpenJarvisTheme
 
 class SettingsActivity : ComponentActivity() {
     
     private lateinit var masterKey: MasterKey
     private lateinit var prefs: android.content.SharedPreferences
+    private lateinit var voiceManager: VoiceManager
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -37,12 +40,22 @@ class SettingsActivity : ComponentActivity() {
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
         )
         
+        voiceManager = VoiceManager(applicationContext)
+
         setContent {
             OpenJarvisTheme {
                 SettingsScreen(
                     onNavigateBack = { finish() },
                     onSaveProvider = { name, baseUrl, apiKey, model ->
                         saveProviderSettings(name, baseUrl, apiKey, model)
+                    },
+                    voiceEnabledInitial = voiceManager.isVoiceEnabled(),
+                    onVoiceEnabledChange = { voiceManager.setVoiceEnabled(it) },
+                    speakResultsInitial = voiceManager.isSpeakResultsEnabled(),
+                    onSpeakResultsChange = { voiceManager.setSpeakResultsEnabled(it) },
+                    sttModeInitial = if (voiceManager.getSTTMode() == STTMode.AUTO_VAD) "Auto (VAD)" else "Push to Talk",
+                    onSTTModeChange = {
+                        voiceManager.setSTTMode(if (it == "Auto (VAD)") STTMode.AUTO_VAD else STTMode.PUSH_TO_TALK)
                     },
                     modifier = Modifier.fillMaxSize()
                 )
