@@ -2,7 +2,6 @@ package com.openjarvis.bridge
 
 import android.content.Context
 import android.os.Build
-import android.os.Process
 import com.openjarvis.agent.AgentCore
 import com.openjarvis.agent.AgentState
 import com.openjarvis.graphify.GraphifyRepository
@@ -30,25 +29,25 @@ class SocketServer(
     private val socketFile: java.io.File
         get() = java.io.File(context.filesDir, SOCKET_NAME)
     
-    private val allowedUids = setOf(
-        context.applicationInfo.uid,
-        2000,
-        "com.termux".hashCode()
-    )
-
-    private fun isAuthorized(): Boolean {
-        return try {
-            val callingUid = Process.myUid()
-            callingUid in allowedUids
-        } catch (e: Exception) {
-            false
-        }
-    }
-    
     companion object {
-        private const val SOCKET_NAME = "jarvis.port"
+        const val SOCKET_NAME = "jarvis.port"
         private const val MAX_COMMAND_LENGTH = 2000
         private const val MAX_REQUESTS_PER_SECOND = 10
+
+        internal fun parseRequestLine(line: String): Pair<String, String>? = try {
+            val json = org.json.JSONObject(line)
+            val cmd = json.optString("cmd", "")
+            val requestId = json.optString("requestId", "")
+            if (cmd.isBlank()) null else Pair(requestId, cmd)
+        } catch (_: Exception) {
+            null
+        }
+
+        internal fun escapeJsonValue(value: String): String =
+            org.json.JSONObject.quote(value).removeSurrounding("\"")
+
+        internal fun errorResponse(requestId: String, error: String): String =
+            """{"requestId":${org.json.JSONObject.quote(requestId)},"status":"error","result":${org.json.JSONObject.quote(error)}}"""
     }
     
     fun start() {
@@ -77,7 +76,9 @@ class SocketServer(
 
     private suspend fun acceptConnections() = withContext(Dispatchers.IO) {
         try {
-            serverSocket = ServerSocket(0)
+            serverSocket = ServerSocket().apply {
+                bind(java.net.InetSocketAddress(java.net.InetAddress.getLoopbackAddress(), 0))
+            }
             runningPort = serverSocket?.localPort ?: 0
             
             val sockFile = socketFile
@@ -103,15 +104,22 @@ class SocketServer(
             val reader = BufferedReader(InputStreamReader(clientSocket.getInputStream()))
             val writer = PrintWriter(clientSocket.getOutputStream(), true)
             
-            val line = reader.readLine() ?: run {
-                writer.println("""{"error":"empty request"}""")
+            val lineBuilder = StringBuilder()
+            while (true) {
+                val next = reader.read()
+                if (next == -1 || next == '\n'.code) break
+                if (next == '\r'.code) continue
+                if (lineBuilder.length >= MAX_COMMAND_LENGTH) {
+                    writer.println(createErrorResponse("", "request too large"))
+                    return@withContext
+                }
+                lineBuilder.append(next.toChar())
+            }
+            if (lineBuilder.isEmpty()) {
+                writer.println(createErrorResponse("", "empty request"))
                 return@withContext
             }
-
-            if (!isAuthorized()) {
-                writer.println(createErrorResponse("", "unauthorized"))
-                return@withContext
-            }
+            val line = lineBuilder.toString()
 
             val request = parseRequest(line)
             if (request == null) {
@@ -143,103 +151,93 @@ class SocketServer(
         val accessibilityEnabled = com.openjarvis.accessibility.JarvisAccessibilityService.instance != null
         val provider = try {
             agentCore.getCurrentProviderName()
-        } catch (e: Exception) { "unknown" }
-        
-        val statusJson = buildString {
-            append("{")
-            append("\"requestId\": \"$requestId\",")
-            append("\"status\": \"done\",")
-            append("\"result\": {")
-            append("\"service\": \"running\",")
-            append("\"accessibility\": $accessibilityEnabled,")
-            append("\"provider\": \"$provider\",")
-            append("\"port\": $runningPort")
-            append("}}")
-        }
-        
-        writer.println(statusJson)
+        } catch (_: Exception) { "unknown" }
+
+        val result = org.json.JSONObject()
+            .put("service", "running")
+            .put("accessibility", accessibilityEnabled)
+            .put("provider", provider)
+            .put("port", runningPort)
+        writer.println(responseJson(requestId, "done", result))
     }
 
     private suspend fun handleHistory(writer: PrintWriter, requestId: String) {
-        val tasks = graphifyRepo.getRecentTasks(10)
-        val tasksJson = tasks.joinToString(",", "[", "]") { task ->
-            """{"id":${task.id},"command":"${escapeJson(task.command)}","result":"${escapeJson(task.result)}","timestamp":${task.timestamp}}"""
+        val tasksJson = org.json.JSONArray()
+        graphifyRepo.getRecentTasks(10).forEach { task ->
+            tasksJson.put(
+                org.json.JSONObject()
+                    .put("id", task.id)
+                    .put("command", task.command)
+                    .put("result", task.result)
+                    .put("timestamp", task.timestamp)
+            )
         }
-        
-        writer.println("""{"requestId":"$requestId","status":"done","result":$tasksJson}""")
+        writer.println(responseJson(requestId, "done", tasksJson))
     }
 
     private suspend fun handleProviders(writer: PrintWriter, requestId: String) {
-        val providers = graphifyRepo.getProviderStats()
-        val providersJson = providers.joinToString(",", "[", "]") { p ->
-            """{"name":"${p.name}","useCount":${p.useCount},"successRate":${p.successRate}}"""
+        val providersJson = org.json.JSONArray()
+        graphifyRepo.getProviderStats().forEach { provider ->
+            providersJson.put(
+                org.json.JSONObject()
+                    .put("name", provider.name)
+                    .put("useCount", provider.useCount)
+                    .put("successRate", provider.successRate)
+            )
         }
-        
-        writer.println("""{"requestId":"$requestId","status":"done","result":$providersJson}""")
+        writer.println(responseJson(requestId, "done", providersJson))
     }
 
     private suspend fun handleMemory(writer: PrintWriter, requestId: String) {
-        val context = graphifyRepo.buildMemoryContext("")
-        val contextJson = """{"requestId":"$requestId","status":"done","result":"${escapeJson(context)}"}"""
-        
-        writer.println(contextJson)
+        val memoryContext = graphifyRepo.buildMemoryContext("")
+        writer.println(responseJson(requestId, "done", memoryContext))
     }
 
     private suspend fun handleCommand(writer: PrintWriter, requestId: String, cmd: String) {
         val job = scope.launch {
+            var sawRunningState = false
             agentCore.getStateFlow().collectLatest { state ->
                 when (state) {
                     is AgentState.Running -> {
-                        writer.println("""{"requestId":"$requestId","status":"progress","result":"${state.step}"}""")
+                        sawRunningState = true
+                        writer.println(responseJson(requestId, "progress", state.step))
                         writer.flush()
                     }
                     is AgentState.Done -> {
-                        writer.println("""{"requestId":"$requestId","status":"done","result":"${escapeJson(state.result)}"}""")
-                        writer.flush()
-                        cancel()
+                        if (sawRunningState) {
+                            writer.println(responseJson(requestId, "done", state.result))
+                            writer.flush()
+                            cancel()
+                        }
                     }
                     is AgentState.Error -> {
-                        writer.println("""{"requestId":"$requestId","status":"error","result":"${escapeJson(state.message)}""")
-                        writer.flush()
-                        cancel()
+                        if (sawRunningState) {
+                            writer.println(responseJson(requestId, "error", state.message))
+                            writer.flush()
+                            cancel()
+                        }
                     }
                     is AgentState.Idle -> { }
                 }
             }
         }
-        
+
         agentCore.executeTask(cmd)
-        
         job.join()
     }
 
-    private fun parseRequest(line: String): Pair<String, String>? {
-        return try {
-            val json = org.json.JSONObject(line)
-            val cmd = json.optString("cmd", "")
-            val requestId = json.optString("requestId", "")
-            
-            if (cmd.isBlank()) null
-            else Pair(requestId, cmd)
-        } catch (e: Exception) {
-            null
-        }
-    }
+    private fun responseJson(requestId: String, status: String, result: Any): String =
+        org.json.JSONObject()
+            .put("requestId", requestId)
+            .put("status", status)
+            .put("result", result)
+            .toString()
 
-    internal fun createErrorResponse(requestId: String, error: String): String {
-        return """{"requestId":"$requestId","status":"error","result":"$error"}"""
-    }
+    private fun parseRequest(line: String): Pair<String, String>? = parseRequestLine(line)
 
-    internal fun escapeJson(s: String): String {
-        return s
-            .replace("\\", "\\\\")
-            .replace("\"", "\\\"")
-            .replace("\n", "\\n")
-            .replace("\r", "\\r")
-            .replace("\t", "\\t")
-    }
+    internal fun createErrorResponse(requestId: String, error: String): String =
+        errorResponse(requestId, error)
 
-    companion object {
-        const val SOCKET_NAME = "jarvis.port"
-    }
+    internal fun escapeJson(s: String): String = escapeJsonValue(s)
+
 }

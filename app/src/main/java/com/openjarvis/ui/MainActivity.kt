@@ -8,7 +8,8 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.*
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -61,6 +62,7 @@ class MainActivity : ComponentActivity() {
                     DashboardScreen(
                         onStartOverlay = { startOverlayService() },
                         onOpenSettings = { openSettings() },
+                        onChatClick = { startActivity(Intent(this@MainActivity, ChatActivity::class.java)) },
                         graphifyRepo = graphifyRepo,
                         modifier = Modifier.fillMaxSize()
                     )

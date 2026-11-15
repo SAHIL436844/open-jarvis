@@ -15,17 +15,25 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Task
+import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalContext
+import android.content.Intent
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -35,27 +43,49 @@ import com.openjarvis.graphify.nodes.AppNode
 import com.openjarvis.graphify.nodes.TaskNode
 import com.openjarvis.ui.theme.VoidColor
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(
     onStartOverlay: () -> Unit,
     onOpenSettings: () -> Unit,
+    onChatClick: () -> Unit,
     graphifyRepo: GraphifyRepository,
     modifier: Modifier = Modifier
 ) {
     var recentTasks by remember { mutableStateOf<List<TaskNode>>(emptyList()) }
     var mostUsedApps by remember { mutableStateOf<List<AppNode>>(emptyList()) }
     var isSystemActive by remember { mutableStateOf(true) }
+    var appsUsedCount by remember { mutableIntStateOf(0) }
+    var showAllTasks by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
     
     var heroAlpha by remember { mutableFloatStateOf(0f) }
     var statsAlpha by remember { mutableFloatStateOf(0f) }
     var tasksAlpha by remember { mutableFloatStateOf(0f) }
     var appsAlpha by remember { mutableFloatStateOf(0f) }
     
+    val context = LocalContext.current
     LaunchedEffect(Unit) {
         recentTasks = graphifyRepo.getRecentTasks(10)
-        mostUsedApps = graphifyRepo.getMostUsedApps(4)
+        appsUsedCount = graphifyRepo.getMostUsedApps(1000).size
+        val recordedApps = graphifyRepo.getMostUsedApps(4)
+        mostUsedApps = if (recordedApps.isNotEmpty()) recordedApps else {
+            context.packageManager.queryIntentActivities(
+                Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0
+            ).mapNotNull { info ->
+                val activityInfo = info.activityInfo ?: return@mapNotNull null
+                AppNode(
+                    packageName = activityInfo.packageName,
+                    label = info.loadLabel(context.packageManager).toString(),
+                    useCount = 0
+                )
+            }.distinctBy { it.packageName }
+                .filterNot { it.packageName == context.packageName }
+                .sortedBy { it.label.lowercase() }
+                .take(12)
+        }
     }
     
     LaunchedEffect(Unit) {
@@ -90,21 +120,72 @@ fun DashboardScreen(
             
             Spacer(modifier = Modifier.height(16.dp))
             
-            StatsRow(tasks = recentTasks, alpha = statsAlpha)
+            StatsRow(tasks = recentTasks, appsUsed = appsUsedCount, alpha = statsAlpha)
             
             Spacer(modifier = Modifier.height(24.dp))
             
-            RecentTasksSection(tasks = recentTasks, alpha = tasksAlpha)
+            RecentTasksSection(tasks = recentTasks, alpha = tasksAlpha, onSeeAllTasks = {
+                coroutineScope.launch { recentTasks = graphifyRepo.getRecentTasks(100) }
+                showAllTasks = true
+            })
             
             Spacer(modifier = Modifier.height(24.dp))
             
-            QuickAppsSection(apps = mostUsedApps, alpha = appsAlpha)
+            QuickAppsSection(apps = mostUsedApps, alpha = appsAlpha, onAppLaunched = { app, success ->
+                coroutineScope.launch {
+                    if (success) {
+                        graphifyRepo.logAppOpened(app.packageName, app.label)
+                        graphifyRepo.logTask("Open ${app.label}", "Opened ${app.label}")
+                        appsUsedCount = graphifyRepo.getMostUsedApps(1000).size
+                    } else {
+                        graphifyRepo.logTask("Open ${app.label}", "Failed to launch ${app.label}")
+                    }
+                    recentTasks = graphifyRepo.getRecentTasks(10)
+                    mostUsedApps = graphifyRepo.getMostUsedApps(4).ifEmpty { mostUsedApps }
+                }
+            })
             
             Spacer(modifier = Modifier.height(32.dp))
         }
         
+        if (showAllTasks) {
+            AlertDialog(
+                onDismissRequest = { showAllTasks = false },
+                title = { Text("Recent Tasks") },
+                text = {
+                    Column(
+                        modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())
+                    ) {
+                        if (recentTasks.isEmpty()) {
+                            Text("No tasks recorded yet.")
+                        } else {
+                            recentTasks.forEach { task ->
+                                Text(
+                                    text = "${task.command} — ${task.result}",
+                                    modifier = Modifier.padding(vertical = 8.dp),
+                                    color = VoidColor.TextPrimary
+                                )
+                                HorizontalDivider(color = VoidColor.BorderSubtle)
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showAllTasks = false }) { Text("Close") }
+                },
+                containerColor = VoidColor.Void900,
+                titleContentColor = VoidColor.TextPrimary,
+                textContentColor = VoidColor.TextSecondary
+            )
+        }
+
         BottomNavBar(
             onSettingsClick = onOpenSettings,
+            onChatClick = onChatClick,
+            onTasksClick = {
+                coroutineScope.launch { recentTasks = graphifyRepo.getRecentTasks(100) }
+                showAllTasks = true
+            },
             modifier = Modifier.align(Alignment.BottomCenter)
         )
     }
@@ -269,14 +350,14 @@ private fun StatusBadge(isActive: Boolean) {
 }
 
 @Composable
-private fun StatsRow(tasks: List<TaskNode>, alpha: Float) {
+private fun StatsRow(tasks: List<TaskNode>, appsUsed: Int, alpha: Float) {
     val animatedCount by animateIntAsState(
         targetValue = tasks.size.coerceAtLeast(0),
         animationSpec = tween(500, easing = EaseOutQuart),
         label = "count"
     )
     
-    Column(alpha = alpha) {
+    Column(modifier = Modifier.graphicsLayer(alpha = alpha)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -287,7 +368,7 @@ private fun StatsRow(tasks: List<TaskNode>, alpha: Float) {
                 modifier = Modifier.weight(1f)
             )
             StatCard(
-                count = 0,
+                count = appsUsed,
                 label = "Apps Used",
                 modifier = Modifier.weight(1f)
             )
@@ -335,8 +416,8 @@ private fun StatCard(count: Int, label: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun RecentTasksSection(tasks: List<TaskNode>, alpha: Float) {
-    Column(alpha = alpha) {
+private fun RecentTasksSection(tasks: List<TaskNode>, alpha: Float, onSeeAllTasks: () -> Unit = {}) {
+    Column(modifier = Modifier.graphicsLayer(alpha = alpha)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
@@ -353,6 +434,7 @@ private fun RecentTasksSection(tasks: List<TaskNode>, alpha: Float) {
             )
             Text(
                 text = "see all →",
+                modifier = Modifier.clickable { onSeeAllTasks() },
                 style = TextStyle(
                     fontFamily = FontFamily.Default,
                     fontWeight = FontWeight(500),
@@ -504,8 +586,8 @@ private fun AppInitialBadge(label: String) {
 }
 
 @Composable
-private fun QuickAppsSection(apps: List<AppNode>, alpha: Float) {
-    Column(alpha = alpha) {
+private fun QuickAppsSection(apps: List<AppNode>, alpha: Float, onAppLaunched: (AppNode, Boolean) -> Unit) {
+    Column(modifier = Modifier.graphicsLayer(alpha = alpha)) {
         Text(
             text = "QUICK APPS",
             style = TextStyle(
@@ -526,15 +608,29 @@ private fun QuickAppsSection(apps: List<AppNode>, alpha: Float) {
             modifier = Modifier.height(220.dp)
         ) {
             items(apps.ifEmpty { emptyList() }) { app ->
-                AppTile(app = app)
+                AppTile(app = app) { success -> onAppLaunched(app, success) }
             }
         }
     }
 }
 
 @Composable
-private fun AppTile(app: AppNode) {
+private fun AppTile(app: AppNode, onAppLaunched: (Boolean) -> Unit) {
+    val context = LocalContext.current
     Surface(
+        onClick = {
+            val intent = context.packageManager.getLaunchIntentForPackage(app.packageName)
+            if (intent != null) {
+                try {
+                    context.startActivity(intent)
+                    onAppLaunched(true)
+                } catch (_: Exception) {
+                    onAppLaunched(false)
+                }
+            } else {
+                onAppLaunched(false)
+            }
+        },
         modifier = Modifier
             .aspectRatio(1f)
             .height(100.dp),
@@ -567,6 +663,8 @@ private fun AppTile(app: AppNode) {
 @Composable
 private fun BottomNavBar(
     onSettingsClick: () -> Unit,
+    onChatClick: () -> Unit,
+    onTasksClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -579,7 +677,7 @@ private fun BottomNavBar(
                 thickness = 1.dp,
                 color = VoidColor.BorderSubtle
             )
-            
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -587,43 +685,42 @@ private fun BottomNavBar(
                     .padding(vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                val items = listOf("Home", "Tasks", "Settings")
-                
-                items.forEachIndexed { index, item ->
-                    val isSelected = item == "Home" || item == "Tasks"
+                val items = listOf("Home", "Chat", "Tasks", "Settings")
+
+                items.forEach { item ->
                     val isSettings = item == "Settings"
-                    
+                    val icon = when (item) {
+                        "Home" -> Icons.Filled.Home
+                        "Chat" -> Icons.Filled.ChatBubbleOutline
+                        "Tasks" -> Icons.Filled.History
+                        else -> Icons.Filled.Settings
+                    }
+                    val tint = if (isSettings) VoidColor.TextDisabled else VoidColor.Violet
+
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.clickable {
-                            if (isSettings) onSettingsClick()
-                        }
-                    ) {
-                        if (isSelected) {
-                            Surface(
-                                shape = RoundedCornerShape(24.dp),
-                                color = VoidColor.Violet.copy(alpha = 0.08f)
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        imageVector = if (item == "Home") Icons.Filled.Task else Icons.Filled.Task,
-                                        contentDescription = item,
-                                        tint = VoidColor.Violet,
-                                        modifier = Modifier.size(22.dp)
-                                    )
+                        verticalArrangement = Arrangement.Center,
+                        modifier = Modifier
+                            .clickable {
+                                when (item) {
+                                    "Chat" -> onChatClick()
+                                    "Tasks" -> onTasksClick()
+                                    "Settings" -> onSettingsClick()
                                 }
                             }
-                        } else {
-                            Icon(
-                                imageVector = Icons.Filled.Settings,
-                                contentDescription = item,
-                                tint = VoidColor.TextDisabled,
-                                modifier = Modifier.size(22.dp)
-                            )
-                        }
+                            .padding(horizontal = 20.dp, vertical = 4.dp)
+                    ) {
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = item,
+                            tint = tint,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Text(
+                            text = item,
+                            color = tint,
+                            style = MaterialTheme.typography.labelSmall
+                        )
                     }
                 }
             }

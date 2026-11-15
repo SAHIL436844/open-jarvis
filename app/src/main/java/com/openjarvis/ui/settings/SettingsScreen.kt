@@ -17,9 +17,12 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -38,6 +41,12 @@ import com.openjarvis.ui.theme.VoidColor
 fun SettingsScreen(
     onNavigateBack: () -> Unit,
     onSaveProvider: (String, String, String, String) -> Unit,
+    voiceEnabledInitial: Boolean = false,
+    onVoiceEnabledChange: (Boolean) -> Unit = {},
+    speakResultsInitial: Boolean = true,
+    onSpeakResultsChange: (Boolean) -> Unit = {},
+    sttModeInitial: String = "Push to Talk",
+    onSTTModeChange: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var selectedProvider by remember { mutableStateOf("Groq") }
@@ -49,16 +58,31 @@ fun SettingsScreen(
     var showPassword by remember { mutableStateOf(false) }
     var lastSaved by remember { mutableStateOf(0L) }
     var savedVisible by remember { mutableStateOf(false) }
-    var voiceEnabled by remember { mutableStateOf(false) }
-    var speakResults by remember { mutableStateOf(true) }
+    var voiceEnabled by remember { mutableStateOf(voiceEnabledInitial) }
+    var speakResults by remember { mutableStateOf(speakResultsInitial) }
     var speechRate by remember { mutableStateOf(1.05f) }
-    var sttMode by remember { mutableStateOf("Push to Talk") }
+    var sttMode by remember { mutableStateOf(sttModeInitial) }
     
     LaunchedEffect(selectedProvider) {
-        showBaseUrlField = selectedProvider == "Custom"
+        showBaseUrlField = selectedProvider == "Custom" || selectedProvider == "Ollama (Local)"
+        model = when (selectedProvider) {
+            "Groq" -> "llama-3.1-70b-versatile"
+            "Google Gemini" -> "gemini-1.5-flash"
+            "OpenRouter" -> "meta-llama/llama-3-8b-instruct:free"
+            "Anthropic Claude" -> "claude-haiku-4-20250514"
+            "OpenAI" -> "gpt-4o-mini"
+            "Ollama (Local)" -> "llama3"
+            else -> model
+        }
+        baseUrl = when (selectedProvider) {
+            "Ollama (Local)" -> "http://localhost:11434/v1"
+            "Custom" -> baseUrl
+            else -> ""
+        }
     }
     
     val scrollState = rememberScrollState()
+    val context = LocalContext.current
     
     Box(
         modifier = modifier
@@ -107,7 +131,8 @@ fun SettingsScreen(
                     onValueChange = { apiKey = it },
                     label = "API Key",
                     isFocused = false,
-                    isPassword = !showPassword,
+                    isPassword = true,
+                    showPassword = showPassword,
                     onTogglePassword = { showPassword = !showPassword }
                 )
                 
@@ -131,9 +156,11 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(24.dp))
                 
                 TestConnectionButton(
+                    provider = selectedProvider,
                     apiKey = apiKey,
                     baseUrl = baseUrl,
                     model = model,
+                    context = context,
                     onSave = { name, url, key, mdl ->
                         onSaveProvider(name, url, key, mdl)
                         lastSaved = System.currentTimeMillis()
@@ -151,7 +178,10 @@ fun SettingsScreen(
                     title = "Voice Assistant",
                     subtitle = "Push to Talk · VAD supported",
                     enabled = voiceEnabled,
-                    onToggle = { voiceEnabled = !voiceEnabled }
+                    onToggle = {
+                        voiceEnabled = !voiceEnabled
+                        onVoiceEnabledChange(voiceEnabled)
+                    }
                 )
                 
                 if (voiceEnabled) {
@@ -161,7 +191,10 @@ fun SettingsScreen(
                         title = "Speak Results",
                         subtitle = "Jarvis reads results aloud",
                         enabled = speakResults,
-                        onToggle = { speakResults = !speakResults }
+                        onToggle = {
+                            speakResults = !speakResults
+                            onSpeakResultsChange(speakResults)
+                        }
                     )
                     
                     Spacer(modifier = Modifier.height(8.dp))
@@ -178,6 +211,7 @@ fun SettingsScreen(
                                 .fillMaxWidth()
                                 .clickable { 
                                     sttMode = if (sttMode == "Push to Talk") "Auto (VAD)" else "Push to Talk"
+                                    onSTTModeChange(sttMode)
                                 }
                                 .padding(16.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -507,6 +541,7 @@ fun FloatingLabelTextField(
     label: String,
     isFocused: Boolean,
     isPassword: Boolean = false,
+    showPassword: Boolean = false,
     visible: Boolean = true,
     onTogglePassword: (() -> Unit)? = null
 ) {
@@ -575,12 +610,15 @@ fun FloatingLabelTextField(
 
 @Composable
 private fun TestConnectionButton(
+    provider: String,
     apiKey: String,
     baseUrl: String,
     model: String,
+    context: android.content.Context,
     onSave: (String, String, String, String) -> Unit
 ) {
     var testState by remember { mutableStateOf<TestState>(TestState.Idle) }
+    val scope = rememberCoroutineScope()
     
     val borderColor by animateColorAsState(
         targetValue = when (testState) {
@@ -602,8 +640,29 @@ private fun TestConnectionButton(
     
     OutlinedButton(
         onClick = {
-            onSave("Groq", baseUrl, apiKey, model)
-            testState = TestState.Success(150)
+            if (testState !is TestState.Loading) {
+                testState = TestState.Loading
+                scope.launch {
+                    val result = runCatching {
+                        UniversalAdapter(context)
+                            .createProvider(provider, baseUrl, apiKey, model)
+                            .testConnection()
+                            .getOrThrow()
+                    }
+                    result.fold(
+                        onSuccess = { elapsedMs ->
+                            onSave(provider, baseUrl, apiKey, model)
+                            testState = TestState.Success(elapsedMs)
+                        },
+                        onFailure = { error ->
+                            val message = error.message.orEmpty()
+                            val safeMessage = Regex("HTTP\\s+\\d{3}", RegexOption.IGNORE_CASE)
+                                .find(message)?.value ?: "Connection failed; check key, model, and network"
+                            testState = TestState.Error(safeMessage)
+                        }
+                    )
+                }
+            }
         },
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -613,7 +672,7 @@ private fun TestConnectionButton(
         )
     ) {
         when (val state = testState) {
-            is TestState.Idle -> Text("Test Connection")
+            is TestState.Idle -> Text("Test & Save API Settings")
             is TestState.Loading -> CircularProgressIndicator(
                 modifier = Modifier.size(16.dp),
                 strokeWidth = 2.dp,
@@ -625,7 +684,7 @@ private fun TestConnectionButton(
                 Text("Connected — ${state.ms}ms")
             }
             is TestState.Error -> {
-                Text("Failed — check key")
+                Text(state.message)
             }
         }
     }

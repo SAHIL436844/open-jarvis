@@ -29,7 +29,7 @@ class AgentCore(private val context: Context) {
     private val graphifyRepo = GraphifyRepository(context)
     private val analysisEngine = AnalysisEngine(context)
     private val universalAdapter = UniversalAdapter(context)
-    private val screenReader = ScreenReader(context)
+    private val screenReader = ScreenReader()
     private val visionModule = VisionModule.getInstance(context)
     private val taskRouter = TaskRouter(context)
     private val appAnalyzer = AppAnalyzer(context)
@@ -82,7 +82,7 @@ RULES:
 - If a task is impossible to do safely, return: [{"action":"error","message":"reason"}]
 """.trimIndent()
 
-fun executeTask(cleanCommand: String) {
+fun executeTask(cleanCommand: String, persona: String = "JARVIS") {
         workingMemory = TaskWorkingMemory()
         
         scope.launch {
@@ -92,7 +92,7 @@ fun executeTask(cleanCommand: String) {
                     when (sanitized) {
                         is PromptSanitizer.SanitizeResult.Rejected -> {
                             _state.value = AgentState.Error(sanitized.reason)
-                            return@taskMutex.withLock
+                            return@withLock
                         }
                         is PromptSanitizer.SanitizeResult.Suspicious -> {
                             _state.value = AgentState.Running("analyzing...")
@@ -120,7 +120,17 @@ fun executeTask(cleanCommand: String) {
                 
                 val memoryContext = graphifyRepo.buildMemoryContext(cleanCommand)
                 
-                val fullSystem = systemPrompt
+                val personaPrompt = systemPrompt.replace(
+                    "You are Open Jarvis — an Android device control AI agent.",
+                    when {
+                        persona.equals("ULTRON", ignoreCase = true) ->
+                            "You are ULTRON, a precise and strategic Android device control AI agent. Use concise, analytical language. Stay within the same allowed device actions and safety rules."
+                        persona.equals("MYTHOS", ignoreCase = true) ->
+                            "You are MYTHOS, an experimental analytical Android assistant. Be rigorous, explore alternatives, and return only valid JSON actions from the allowed list. Never exceed the same action permissions, confirmation rules, or safety limits."
+                        else -> "You are Open Jarvis — an Android device control AI agent."
+                    }
+                )
+                val fullSystem = personaPrompt
                     .replace("{SCREEN_OCR}", screenText.take(2000))
                     .replace("{APP_REASONING}", plan.reasoning)
                     .replace("{AI_APPS}", getInstalledAIApps())
@@ -130,7 +140,7 @@ fun executeTask(cleanCommand: String) {
                 
                 val startTime = System.currentTimeMillis()
                 
-                val result = universalAdapter.complete(fullSystem, cleanCommand)
+                val result = if (persona.equals("MYTHOS", ignoreCase = true)) universalAdapter.completeForPersona("mythos", fullSystem, cleanCommand) else universalAdapter.complete(fullSystem, cleanCommand)
                 result.fold(
                     onSuccess = { rawJson ->
                         val latency = System.currentTimeMillis() - startTime
@@ -146,10 +156,10 @@ fun executeTask(cleanCommand: String) {
                         
                         val actions = ActionJsonParser.parse(rawForParsing)
                             ?: run {
-                                val retry = universalAdapter.complete(
-                                    fullSystem,
-                                    "$cleanCommand\n\nRespond with JSON array ONLY. No other text."
-                                )
+                                val retryPrompt = "$cleanCommand\n\nRespond with JSON array ONLY. No other text."
+                                val retry = if (persona.equals("MYTHOS", ignoreCase = true))
+                                    universalAdapter.completeForPersona("mythos", fullSystem, retryPrompt)
+                                else universalAdapter.complete(fullSystem, retryPrompt)
                                 retry.getOrNull()?.let { ActionJsonParser.parse(it) }
                             }
                         
@@ -161,17 +171,27 @@ fun executeTask(cleanCommand: String) {
                         
                         _state.value = AgentState.Running("executing ${actions.size} actions...")
                         
-                        executeActions(actions)
-                        
+                        val executionError = executeActions(actions)
+                        if (executionError != null) {
+                            _state.value = AgentState.Error(executionError)
+                            graphifyRepo.logTask(
+                                command = cleanCommand,
+                                result = "failed: $executionError",
+                                provider = universalAdapter.getProviderName(),
+                                latencyMs = latency
+                            )
+                            return@fold
+                        }
+
                         graphifyRepo.logTask(
-                            cleanCommand = cleanCommand,
+                            command = cleanCommand,
                             result = "success",
                             provider = universalAdapter.getProviderName(),
                             latencyMs = latency
                         )
-                        
+
                         analysisEngine.analyzeLastTask()
-                        
+
                         _state.value = AgentState.Done("done in ${latency}ms")
                     },
                     onFailure = { error ->
@@ -192,6 +212,7 @@ fun executeTask(cleanCommand: String) {
             }
         }
     }
+    }
 
     suspend fun testConnection(): Result<Long> {
         return universalAdapter.testConnection()
@@ -211,75 +232,166 @@ fun executeTask(cleanCommand: String) {
     
     suspend fun getAIAppCount(): Int = appAnalyzer.getAICount()
 
-    private suspend fun executeActions(actions: List<Action>) {
+    /**
+     * Executes actions sequentially and returns null only when every action succeeds.
+     * A non-null result is shown to the user and recorded as a failed task.
+     */
+    private suspend fun executeActions(actions: List<Action>): String? {
+        if (actions.isEmpty()) return "The AI returned an empty action plan"
+
         for ((index, action) in actions.withIndex()) {
             _state.value = AgentState.Running("action ${index + 1}/${actions.size}")
-            
-            when (action.action) {
+
+            val service = JarvisAccessibilityService.instance
+            val error = when (action.action) {
                 Action.OPEN_APP -> {
-                    val label = action.label
-                    if (label != null) {
-                        val packageName = findPackageByLabel(label)
-                        if (packageName != null) {
-                            JarvisAccessibilityService.instance?.openAppByPackage(packageName)
-                            graphifyRepo.logAppOpened(packageName, label)
-                        } else {
-                            _state.value = AgentState.Error("App not found: $label")
-                            return
-                        }
+                    val packageName = action.packageName ?: action.label?.let { findPackageByLabel(it) }
+                    if (packageName == null) {
+                        "App not found: ${action.label ?: "no package or label provided"}"
+                    } else if (service == null) {
+                        "Accessibility service is not connected"
+                    } else if (context.packageManager.getLaunchIntentForPackage(packageName) == null) {
+                        "No launchable app found for package: $packageName"
+                    } else {
+                        service.openAppByPackage(packageName)
+                        graphifyRepo.logAppOpened(packageName, action.label ?: packageName)
+                        null
                     }
                 }
                 Action.TAP -> {
-                    action.text?.let { text ->
-                        JarvisAccessibilityService.instance?.tapByText(text)
+                    val text = action.text
+                    when {
+                        text.isNullOrBlank() -> "Tap action has no target text"
+                        service == null -> "Accessibility service is not connected"
+                        service.tapByText(text) -> null
+                        else -> "Could not tap: $text"
                     }
                 }
                 Action.TYPE -> {
-                    action.value?.let { value ->
-                        JarvisAccessibilityService.instance?.typeText(value)
+                    val value = action.value
+                    when {
+                        value == null -> "Type action has no value"
+                        service == null -> "Accessibility service is not connected"
+                        service.typeText(value) -> null
+                        else -> "Could not type text"
                     }
                 }
-                Action.PRESS_BACK -> {
-                    JarvisAccessibilityService.instance?.pressBack()
+                Action.CLEAR_TYPE -> {
+                    val value = action.value
+                    when {
+                        value == null -> "Clear-and-type action has no value"
+                        service == null -> "Accessibility service is not connected"
+                        service.clearAndTypeText(value) -> null
+                        else -> "Could not clear and type text; focus an editable field first"
+                    }
                 }
-                Action.PRESS_HOME -> {
-                    JarvisAccessibilityService.instance?.pressHome()
+                Action.TAP_COORDS -> {
+                    val x = action.x
+                    val y = action.y
+                    when {
+                        x == null || y == null -> "Coordinate tap requires x and y"
+                        service == null -> "Accessibility service is not connected"
+                        service.tapCoordinates(x, y) -> null
+                        else -> "Coordinate tap failed or coordinates are outside the screen"
+                    }
                 }
-                Action.PRESS_RECENTS -> {
-                    JarvisAccessibilityService.instance?.pressRecents()
+                Action.LONG_PRESS -> {
+                    val target = action.text
+                    when {
+                        target.isNullOrBlank() -> "Long-press action has no target text"
+                        service == null -> "Accessibility service is not connected"
+                        service.longPressByText(target) -> null
+                        else -> "Could not long-press: $target"
+                    }
                 }
+                Action.SWIPE, Action.SCROLL -> {
+                    val direction = action.direction
+                    when {
+                        direction.isNullOrBlank() -> "Swipe/scroll action requires a direction"
+                        service == null -> "Accessibility service is not connected"
+                        action.action == Action.SCROLL && direction !in listOf("up", "down") ->
+                            "Scroll direction must be up or down"
+                        service.swipe(direction, if (action.action == Action.SCROLL) "medium" else (action.distance ?: "medium")) -> null
+                        else -> "Swipe/scroll failed; use up, down, left, or right"
+                    }
+                }
+                Action.WAIT_FOR -> {
+                    val expected = action.text
+                    when {
+                        expected.isNullOrBlank() -> "wait_for requires target text"
+                        action.timeoutMs <= 0L -> "wait_for timeout must be positive"
+                        else -> {
+                            val deadline = System.currentTimeMillis() + action.timeoutMs.coerceAtMost(30_000L)
+                            var found = false
+                            while (System.currentTimeMillis() < deadline && !found) {
+                                found = screenReader.extractAllText().contains(expected, ignoreCase = true)
+                                if (!found) kotlinx.coroutines.delay(250)
+                            }
+                            if (found) null else "Timed out waiting for: $expected"
+                        }
+                    }
+                }
+                Action.READ_SCREEN -> {
+                    val text = screenReader.extractAllText()
+                    if (text.isBlank()) "Screen reader returned no visible text"
+                    else {
+                        action.outputKey?.let { workingMemory.set(it, text) }
+                        null
+                    }
+                }
+                Action.SCREENSHOT -> "Screenshot capture is not implemented yet; use read_screen for accessible on-screen text"
+                Action.PRESS_BACK -> if (service?.pressBack() == true) null else "Back action failed or accessibility service is disconnected"
+                Action.PRESS_HOME -> if (service?.pressHome() == true) null else "Home action failed or accessibility service is disconnected"
+                Action.PRESS_RECENTS -> if (service?.pressRecents() == true) null else "Recents action failed or accessibility service is disconnected"
                 Action.AI_PROMPT -> {
                     val packageName = action.packageName
-                    val prompt = workingMemory.interpolate(action.prompt ?: "")
-                    val outputKey = action.outputKey
-                    
-                    if (packageName != null) {
-                        val meta = AIApps.KNOWN_AI_APPS[packageName]
-                        if (meta != null) {
-                            aiAppInteractor.openAIApp(meta)
-                            kotlinx.coroutines.delay(2000)
-                            aiAppInteractor.typePrompt(prompt)
-                            kotlinx.coroutines.delay(1000)
-                            val response = aiAppInteractor.waitForResponse()
-                            if (outputKey != null) {
-                                workingMemory.set(outputKey, response)
+                    val meta = packageName?.let { AIApps.KNOWN_AI_APPS[it] }
+                    if (meta == null) {
+                        "Unsupported AI app: ${packageName ?: "package not provided"}"
+                    } else {
+                        try {
+                            val prompt = workingMemory.interpolate(action.prompt ?: "")
+                            if (!aiAppInteractor.openAIApp(meta)) {
+                                "Could not open AI app: ${meta.packageName}"
+                            } else {
+                                kotlinx.coroutines.delay(2000)
+                                if (!aiAppInteractor.typePrompt(prompt)) {
+                                    "Could not enter prompt in AI app"
+                                } else {
+                                    kotlinx.coroutines.delay(1000)
+                                    val response = aiAppInteractor.waitForResponse()
+                                    val outputKey = action.outputKey
+                                    if (outputKey != null && response.isBlank()) {
+                                        "AI app returned no response"
+                                    } else {
+                                        if (outputKey != null) workingMemory.set(outputKey, response)
+                                        null
+                                    }
+                                }
                             }
+                        } catch (e: Exception) {
+                            "AI app action failed: ${e.message ?: "unknown error"}"
                         }
                     }
                 }
                 Action.EXTRACT_TEXT -> {
-                    val outputKey = action.outputKey ?: "page_text"
-                    val text = screenReader.extractAllText()
-                    workingMemory.set(outputKey, text)
+                    try {
+                        val outputKey = action.outputKey ?: "page_text"
+                        val text = screenReader.extractAllText()
+                        workingMemory.set(outputKey, text)
+                        if (text.isBlank()) "Could not extract screen text" else null
+                    } catch (e: Exception) {
+                        "Screen text extraction failed: ${e.message ?: "unknown error"}"
+                    }
                 }
-                Action.ERROR -> {
-                    _state.value = AgentState.Error(action.message ?: "Task failed")
-                    return
-                }
+                Action.ERROR -> action.message ?: "The AI plan reported an error"
+                else -> "Unsupported action: ${action.action}"
             }
-            
+
+            if (error != null) return "Action ${index + 1}/${actions.size} (${action.action}) failed: $error"
             kotlinx.coroutines.delay(500)
         }
+        return null
     }
 
     private fun findPackageByLabel(label: String): String? {

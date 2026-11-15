@@ -20,33 +20,92 @@ class UniversalAdapter(private val context: Context) {
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
     )
     
-    fun getActiveProvider(): LLMProvider {
-        val name = prefs.getString("provider_name", "Groq")
-        val baseUrl = prefs.getString("provider_base_url", "")
-        val apiKey = prefs.getString("provider_api_key", "")
+    fun getActiveProvider(): LLMProvider = getProvider(getProviderName())
+
+    fun getProvider(providerName: String): LLMProvider {
+        val baseUrl = prefs.getString("provider_base_url", "") ?: ""
+        val apiKey = prefs.getString("provider_api_key", "") ?: ""
         val model = prefs.getString("provider_model", "")
-        
+            ?.takeIf { it.isNotBlank() }
+            ?: getDefaultModel(providerName)
+        return createProvider(providerName, baseUrl, apiKey, model)
+    }
+
+    /**
+     * Creates a provider from the supplied settings without persisting them.
+     * Used by Settings so connection checks can validate unsaved credentials.
+     */
+    fun createProvider(
+        providerName: String,
+        baseUrl: String,
+        apiKey: String,
+        model: String
+    ): LLMProvider {
+        val name = providerName
+        val resolvedModel = model.takeIf { it.isNotBlank() } ?: getDefaultModel(name)
         return when (name) {
-            "Groq" -> GroqProvider(apiKey, model)
-            "Google Gemini", "gemini" -> GeminiProvider(apiKey, model)
-            "OpenRouter" -> OpenRouterProvider(apiKey, model)
-            "Anthropic Claude" -> AnthropicProvider(apiKey, model)
-            "OpenAI" -> OpenAIProvider(apiKey, model)
-            "Ollama (Local)" -> OllamaProvider(baseUrl, model)
+            "Groq" -> GroqProvider(apiKey, resolvedModel)
+            "Google Gemini", "gemini" -> GeminiProvider(apiKey, resolvedModel)
+            "OpenRouter" -> OpenRouterProvider(apiKey, resolvedModel)
+            "Anthropic Claude" -> AnthropicProvider(apiKey, resolvedModel)
+            "OpenAI" -> OpenAIProvider(apiKey, resolvedModel)
+            "Ollama (Local)" -> OllamaProvider(baseUrl, resolvedModel)
             "Local (LlamaCpp)" -> {
                 val mm = getModelManager(context)
                 val tier = mm.getDownloadedTier() ?: ModelManager.ModelTier.MINIMUM
                 LlamaProvider(mm.getModelPath(tier), tier.displayName)
             }
-            "Custom" -> CustomProvider(baseUrl, apiKey, model)
-            else -> CustomProvider(baseUrl, apiKey, model)
+            "Custom" -> CustomProvider(baseUrl, apiKey, resolvedModel)
+            else -> CustomProvider(baseUrl, apiKey, resolvedModel)
         }
     }
-    
+
     suspend fun complete(
         systemPrompt: String,
         userMessage: String
     ): Result<String> = getActiveProvider().complete(systemPrompt, userMessage)
+
+    data class PersonaSettings(
+        val provider: String,
+        val baseUrl: String,
+        val apiKey: String,
+        val model: String
+    )
+
+    fun getPersonaSettings(persona: String): PersonaSettings {
+        val prefix = persona.lowercase() + "_"
+        val provider = prefs.getString(prefix + "provider", "Groq") ?: "Groq"
+        return PersonaSettings(
+            provider = provider,
+            baseUrl = prefs.getString(prefix + "base_url", "") ?: "",
+            apiKey = prefs.getString(prefix + "api_key", "") ?: "",
+            model = prefs.getString(prefix + "model", getDefaultModel(provider))
+                ?.takeIf { it.isNotBlank() } ?: getDefaultModel(provider)
+        )
+    }
+
+    fun savePersonaSettings(persona: String, provider: String, baseUrl: String, apiKey: String, model: String): Boolean {
+        val prefix = persona.lowercase() + "_"
+        // Commit synchronously so the dialog can safely close and settings survive an
+        // immediate Activity/app restart. Verify the non-secret fields after writing.
+        val saved = prefs.edit()
+            .putString(prefix + "provider", provider)
+            .putString(prefix + "base_url", baseUrl)
+            .putString(prefix + "api_key", apiKey)
+            .putString(prefix + "model", model)
+            .commit()
+        return saved &&
+            prefs.getString(prefix + "provider", null) == provider &&
+            prefs.getString(prefix + "base_url", null) == baseUrl &&
+            prefs.getString(prefix + "api_key", null) == apiKey &&
+            prefs.getString(prefix + "model", null) == model
+    }
+
+    suspend fun completeForPersona(persona: String, systemPrompt: String, userMessage: String): Result<String> {
+        val settings = getPersonaSettings(persona)
+        return createProvider(settings.provider, settings.baseUrl, settings.apiKey, settings.model)
+            .complete(systemPrompt, userMessage)
+    }
     
     suspend fun testConnection(): Result<Long> = getActiveProvider().testConnection()
     
@@ -72,7 +131,8 @@ class UniversalAdapter(private val context: Context) {
             "Anthropic Claude",
             "OpenAI",
             "Ollama (Local)",
-            "Local (LlamaCpp)"
+            "Local (LlamaCpp)",
+            "Custom"
         )
         
         fun getModelManager(context: Context): ModelManager {
@@ -82,7 +142,7 @@ class UniversalAdapter(private val context: Context) {
         }
         
         fun isLocalModelLoaded(): Boolean {
-            return modelManager?.state?.value is ModelManager.ModelState.ModelLoaded
+            return modelManager?.state?.value is ModelManager.ModelState.Loaded
         }
         
         suspend fun loadLocalModel(tier: ModelManager.ModelTier): Result<Unit> {
