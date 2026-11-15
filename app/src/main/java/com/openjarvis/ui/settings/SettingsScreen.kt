@@ -39,6 +39,12 @@ import com.openjarvis.ui.theme.VoidColor
 fun SettingsScreen(
     onNavigateBack: () -> Unit,
     onSaveProvider: (String, String, String, String) -> Unit,
+    voiceEnabledInitial: Boolean = false,
+    onVoiceEnabledChange: (Boolean) -> Unit = {},
+    speakResultsInitial: Boolean = true,
+    onSpeakResultsChange: (Boolean) -> Unit = {},
+    sttModeInitial: String = "Push to Talk",
+    onSTTModeChange: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var selectedProvider by remember { mutableStateOf("Groq") }
@@ -50,10 +56,10 @@ fun SettingsScreen(
     var showPassword by remember { mutableStateOf(false) }
     var lastSaved by remember { mutableStateOf(0L) }
     var savedVisible by remember { mutableStateOf(false) }
-    var voiceEnabled by remember { mutableStateOf(false) }
-    var speakResults by remember { mutableStateOf(true) }
+    var voiceEnabled by remember { mutableStateOf(voiceEnabledInitial) }
+    var speakResults by remember { mutableStateOf(speakResultsInitial) }
     var speechRate by remember { mutableStateOf(1.05f) }
-    var sttMode by remember { mutableStateOf("Push to Talk") }
+    var sttMode by remember { mutableStateOf(sttModeInitial) }
     
     LaunchedEffect(selectedProvider) {
         showBaseUrlField = selectedProvider == "Custom"
@@ -153,7 +159,10 @@ fun SettingsScreen(
                     title = "Voice Assistant",
                     subtitle = "Push to Talk · VAD supported",
                     enabled = voiceEnabled,
-                    onToggle = { voiceEnabled = !voiceEnabled }
+                    onToggle = {
+                        voiceEnabled = !voiceEnabled
+                        onVoiceEnabledChange(voiceEnabled)
+                    }
                 )
                 
                 if (voiceEnabled) {
@@ -163,7 +172,10 @@ fun SettingsScreen(
                         title = "Speak Results",
                         subtitle = "Jarvis reads results aloud",
                         enabled = speakResults,
-                        onToggle = { speakResults = !speakResults }
+                        onToggle = {
+                            speakResults = !speakResults
+                            onSpeakResultsChange(speakResults)
+                        }
                     )
                     
                     Spacer(modifier = Modifier.height(8.dp))
@@ -180,6 +192,7 @@ fun SettingsScreen(
                                 .fillMaxWidth()
                                 .clickable { 
                                     sttMode = if (sttMode == "Push to Talk") "Auto (VAD)" else "Push to Talk"
+                                    onSTTModeChange(sttMode)
                                 }
                                 .padding(16.dp),
                             verticalAlignment = Alignment.CenterVertically
